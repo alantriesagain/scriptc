@@ -6,7 +6,7 @@ upstream as a pull request on its own; this file lives on its own branch too, `f
 `light-integration` is the release tag with every patch and this file merged; it is the compiler
 light's native build runs (`SCRIPTC=...`, see light's `native/README.md`).
 
-Current base: **v0.3.1** (`3f7179a1`). Published 0.3.1 still has the problems all three fix.
+Current base: **v0.3.2** (`c3492505`). Published 0.3.2 still has the problems all three fix.
 
 ## The patches
 
