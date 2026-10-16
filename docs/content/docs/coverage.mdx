@@ -317,6 +317,12 @@ Some code compiles but can behave differently than under Node.js. Coverage repor
 - `SC6014`: the program observes the key order of a record type whose objects create their keys in orders scriptc doesn't follow per object, such as a spread of a value whose key order isn't known, or `Object.assign` adding two or more optional properties from a value converted at run time. The warning names the type once, by its keys, and the objects the program builds can still list their keys as under Node.js; see [Record identity and property order](/docs/limitations#record-identity-and-property-order).
 - `SC6015`: a TypeScript statement doesn't compile and its refusal waits for the statement to run. It throws an error that names the refusal when it runs, where it would have completed under Node.js; a program that never reaches the statement runs as it does under Node.js. The same code names a statement of a generic function that takes a value as the one object type its constraint names while the call binds objects of several layouts: the statement throws a `TypeError` for a value of another layout.
 
+## Slow paths
+
+Some code compiles and behaves like Node.js but makes the native program slower. Coverage lists the cases it can detect as `SC69xx` notes under "slower natively", even when the program is fully static. They never fail a build, but `--fail-on=slow-paths` can fail a CI job on them.
+
+- `SC6901`: a write whose key can name any property (`target[key] = value` with a `string` key, `Object.assign` with a non-literal source, a prototype write) can replace class methods by name. Every call to the methods it can replace then reads the method from the instance instead of calling it directly. Type the key as a number or a string literal, write into an object created in the same scope, or keep the entries in a `Map`.
+
 ## Gating builds and CI
 
 By default, `scriptc coverage` exits with status 0 whenever the program type-checks, so you can use the report to track progress. To fail a CI job instead, add `--fail-on`:
@@ -325,7 +331,7 @@ By default, `scriptc coverage` exits with status 0 whenever the program type-che
 $ scriptc coverage src/main.ts --fail-on=blockers
 ```
 
-`--fail-on=blockers` exits with status 1 when the program has blockers that would fail `scriptc build`. Blockers in unreached code and deferred operations don't count. `--fail-on=divergences` also fails on Node divergences, `--fail-on=dynamic` also fails on the `SC6101` warning for [untyped code that likely runs often](#untyped-code-that-likely-runs-often), `--fail-on=dynamic-slots` also fails on [dynamic slots](#dynamic-slots), and `--fail-on=type-claims` also fails on [type claims](#type-claims). A program that doesn't type-check always exits with status 1.
+`--fail-on=blockers` exits with status 1 when the program has blockers that would fail `scriptc build`. Blockers in unreached code and deferred operations don't count. `--fail-on=divergences` also fails on Node divergences, `--fail-on=dynamic` also fails on the `SC6101` warning for [untyped code that likely runs often](#untyped-code-that-likely-runs-often), `--fail-on=dynamic-slots` also fails on [dynamic slots](#dynamic-slots), `--fail-on=type-claims` also fails on [type claims](#type-claims), and `--fail-on=slow-paths` also fails on [slow paths](#slow-paths). A program that doesn't type-check always exits with status 1.
 
 Coverage caches its result. Running it again on an unchanged program, or after edits that only touch comments, reuses the previous verdict. Set `SCRIPTC_NO_CACHE=1` to turn the cache off.
 
@@ -399,7 +405,7 @@ For editors, CI annotations, and other tools, `scriptc coverage --print=diagnost
     </tr>
     <tr>
       <td><code>success</code></td>
-      <td>Coverage: no blockers on the entry path (and, with <code>--fail-on=divergences</code>, no divergences). Build: an artifact was produced, named by <code>artifact</code>.</td>
+      <td>Coverage: no blockers on the entry path (and, with <code>--fail-on=divergences</code>, no divergences, or with <code>--fail-on=slow-paths</code>, no slow paths). Build: an artifact was produced, named by <code>artifact</code>.</td>
     </tr>
     <tr>
       <td><code>phase</code></td>

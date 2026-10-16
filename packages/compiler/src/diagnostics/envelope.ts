@@ -27,6 +27,7 @@ export const DIAGNOSTICS_SCHEMA_VERSION = 1;
  *  - unsupported: valid TypeScript/JavaScript scriptc cannot compile yet
  *  - divergence: compiles, but the native program behaves differently from Node
  *  - performance: compiles and behaves as under Node, but runs slower than typed code would
+ *  - slow-path: compiles and behaves like Node, but the native program is slower
  *  - environment: project configuration, scriptc's type world, toolchain or target
  *  - internal: a compiler bug */
 export type DiagnosticCategory =
@@ -34,6 +35,7 @@ export type DiagnosticCategory =
   | "unsupported"
   | "divergence"
   | "performance"
+  | "slow-path"
   | "environment"
   | "internal";
 
@@ -216,7 +218,8 @@ export interface DiagnosticsEnvelope {
   command: "coverage" | "build";
   entry: string;
   /** coverage: no reached blockers (and, with --fail-on=divergences, no
-   * divergences); build: an artifact was produced. */
+   * divergences, or with --fail-on=slow-paths, no slow paths either);
+   * build: an artifact was produced. */
   success: boolean;
   /** How far the command got: "preflight" when it stopped there,
    * "compile" when blockers remain, "native" when native code generation
@@ -333,11 +336,18 @@ export function isDivergenceCode(code: string): boolean {
   return /^SC60\d{2}$/.test(code);
 }
 
+/** The slow-path band (SC69xx): compiles and behaves like Node, but the
+ * native program is slower. Warnings, never build failures. */
+export function isSlowPathCode(code: string): boolean {
+  return /^SC69\d{2}$/.test(code);
+}
+
 export function categoryOf(diag: ScrDiagnostic): DiagnosticCategory {
   const code: string = diag.code;
   if (isDivergenceCode(code)) return "divergence";
   if (isPerformanceCode(code)) return "performance";
   if (code === "SC6201") return "invalid-source";
+  if (isSlowPathCode(code)) return "slow-path";
   if (code === "SC0001") return diag.typeWorld === true ? "environment" : "invalid-source";
   if (code === "SC0003") return "invalid-source";
   if (code === "SC0002" || code === "SC0004" || code === "SC0016") return "environment";
@@ -477,6 +487,7 @@ export function locateDiagnostic(
       isPerformanceCode(diag.code) ||
       isNodeIslandNoticeCode(diag.code) ||
       diag.code === "SC6201" ||
+      isSlowPathCode(diag.code) ||
       diag.code === "SC8004" ||
       isTypePatchCode(diag.code)
         ? "warning"

@@ -83,6 +83,10 @@ export interface CoverageInput {
    * (diagnostics/type-claims.ts). Never blockers; `--fail-on=type-claims`
    * fails on them. */
   typeClaims?: TypeClaimSite[];
+  /** Sites that make the native program slower (SC69xx): the program
+   * compiles and behaves like Node. Never blockers;
+   * `--fail-on=slow-paths` opts into failing on them. */
+  slowPaths?: ScrDiagnostic[];
   /** Each dependency's native compilation outcome, with the first refusal
    * reason for a refused package. */
   npmStatic?: NpmStaticStatus[];
@@ -451,6 +455,17 @@ export function renderCoverage(input: CoverageInput, opts: CoverageRenderOptions
     });
   };
 
+  // Slow paths: the program compiles and behaves like Node, but these
+  // sites make it slower. Never blockers (--fail-on=slow-paths opts in).
+  const slowPaths = input.slowPaths ?? [];
+  const renderSlowPaths = () => {
+    if (slowPaths.length === 0) return;
+    out.push(
+      `  ${c(YELLOW, "slower natively")}   ${slowPaths.length} site${slowPaths.length === 1 ? "" : "s"} ${c(DIM, "(compiles and behaves like Node; makes calls slower)")}`,
+    );
+    renderRows(groupBlockers(slowPaths), YELLOW);
+  };
+
   const unreachedDiags = [...(un?.diagnostics ?? []), ...(un?.runtimeFences ?? [])];
   if (failed === 0 && input.diagnostics.length === 0 && unreachedDiags.length === 0) {
     out.push(`  ${c(GREEN, "fully static")} — all analyzed statements compile to native code.`);
@@ -460,6 +475,10 @@ export function renderCoverage(input: CoverageInput, opts: CoverageRenderOptions
     }
     renderClaims();
     renderPerformance();
+    if (slowPaths.length > 0) {
+      out.push("");
+      renderSlowPaths();
+    }
     renderReachedOnly();
     return out.join("\n");
   }
@@ -503,6 +522,10 @@ export function renderCoverage(input: CoverageInput, opts: CoverageRenderOptions
   }
   renderClaims();
   renderPerformance();
+  if (slowPaths.length > 0) {
+    out.push("");
+    renderSlowPaths();
+  }
   renderReachedOnly();
   return out.join("\n");
 }
@@ -572,14 +595,15 @@ function displayPath(file: string, root: string | undefined): string {
 }
 
 /** What `coverage --fail-on` checks: reached blockers (they fail a build)
- * and, optionally, divergences, the performance warning or Node islands.
- * Unreached blockers never fail. */
+ * and, optionally, divergences, the performance warning, slow paths or Node
+ * islands. Unreached blockers never fail. */
 export type CoverageFailOn =
   | "blockers"
   | "divergences"
   | "dynamic"
   | "dynamic-slots"
   | "type-claims"
+  | "slow-paths"
   | "node-islands"
   | "eager-node-islands"
   | "island-gaps";
@@ -590,6 +614,7 @@ export const COVERAGE_FAIL_ON: readonly CoverageFailOn[] = [
   "dynamic",
   "dynamic-slots",
   "type-claims",
+  "slow-paths",
   "node-islands",
   "eager-node-islands",
   "island-gaps",
@@ -597,7 +622,8 @@ export const COVERAGE_FAIL_ON: readonly CoverageFailOn[] = [
 
 /** Whether the analysis passes the selected gate. Preflight failures
  * always fail; `failOn` undefined means only preflight fails (the report's
- * historical contract). Divergence gating implies blocker gating. */
+ * historical contract). Divergence and slow-path gating imply blocker
+ * gating. */
 export function coveragePasses(input: CoverageInput, failOn?: CoverageFailOn): boolean {
   if (input.preflightFailed) return false;
   if (failOn === undefined) return true;
@@ -609,6 +635,7 @@ export function coveragePasses(input: CoverageInput, failOn?: CoverageFailOn): b
     return false;
   if (failOn === "dynamic-slots" && (input.dynamicSlots?.length ?? 0) > 0) return false;
   if (failOn === "type-claims" && (input.typeClaims?.length ?? 0) > 0) return false;
+  if (failOn === "slow-paths" && (input.slowPaths?.length ?? 0) > 0) return false;
   // The Node island gates (report-only islands count: they are what a
   // build would choose). Every island evaluates eagerly until deferred
   // evaluation lands, so eager-node-islands equals node-islands for now.
@@ -650,6 +677,7 @@ export function coverageEnvelope(
     add(input.unreached?.runtimeFences, "deferred");
     add(input.divergences, "reached");
     add(input.performance, "reached");
+    add(input.slowPaths, "reached");
   }
   const un = input.unreached;
   const total = input.stats.statementsTotal + (un?.stats.statementsTotal ?? 0);

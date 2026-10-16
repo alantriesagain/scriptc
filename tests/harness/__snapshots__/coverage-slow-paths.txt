@@ -1,0 +1,20 @@
+scriptc coverage tests/coverage-fixtures/slow-paths.ts
+
+  statements analyzed   12
+  compile statically    12  (100%)
+    in dynamic tier     6  (operate on values typed only at runtime; --explain-dynamic lists them)
+
+  fully static — all analyzed statements compile to native code.
+
+  trusts unverified types   1 checked conversion on 1 claim (compiles; a value that contradicts its claimed type throws a TypeError at the conversion)
+      ×1  'value' is untyped; its values are read as number
+          at tests/coverage-fixtures/slow-paths.ts:19:3
+          fix: give 'value' the type its values really have where it is declared, or narrow the value (typeof, in, a schema) before typed code reads it
+
+  slower natively   2 sites (compiles and behaves like Node; makes calls slower)
+      ×1  SC6901  this write's key can name any property, so calls to 2 methods (bump, read) dispatch dynamically: each call reads the method from the instance and boxes the receiver
+          at tests/coverage-fixtures/slow-paths.ts:19:3
+          hint: type the key as a number or a string literal, write into an object created in this scope, or keep the entries in a Map
+      ×1  SC6901  this reflective write can name any property, so calls to 2 methods (bump, read) dispatch dynamically: each call reads the method from the instance and boxes the receiver
+          at tests/coverage-fixtures/slow-paths.ts:22:3
+          hint: pass literal keys or object literals, or keep the entries in a Map

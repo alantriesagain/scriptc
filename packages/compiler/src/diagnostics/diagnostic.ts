@@ -91,7 +91,11 @@
  *            fields that keep ordinary arrays (SC6105, contracts/check.ts)
  *            SC62xx are failures the program has under Node too, also
  *            warnings: Node refuses the program before any module runs, and
- *            the compiled program reproduces that refusal (SC6201)
+ *            the compiled program reproduces that refusal (SC6201).
+ *            SC69xx are slow-path notes, never build failures (coverage
+ *            --fail-on=slow-paths opts in): a write or read that makes
+ *            methods replaceable, so every call to them dispatches
+ *            dynamically (SC6901, frontend/lowering/slow-paths.ts)
  *   SC7xxx  contract types (@scriptc/types): a NoThrow, Int32, Immutable,
  *            Acyclic or ProgramLifetime contract that does not hold or
  *            cannot be checked (SC7001–SC7009, contracts/check.ts)
@@ -283,6 +287,27 @@ export function nodeIslandDataFileDiag(message: string, loc: SrcLoc): ScrDiagnos
     message,
     loc,
     hint: "name the data file by its path relative to the module that reads it; the build ships a Node island module's data files by their exact path",
+  };
+}
+
+/* ── SC69xx: slow paths (notes) ───────────────────────────────────────── */
+
+/** SC6901 — a site that can replace or observe class methods by name. Every
+ * method it names loses direct and virtual dispatch: each call reads the
+ * method from the instance's prototype slots, boxing the receiver. */
+export function replaceableMethodsDiag(
+  what: string,
+  names: readonly string[],
+  hint: string,
+  loc: SrcLoc,
+): ScrDiagnostic {
+  const shown = names.slice(0, 6).join(", ") + (names.length > 6 ? ", …" : "");
+  const count = names.length === 1 ? `method '${names[0]}'` : `${names.length} methods (${shown})`;
+  return {
+    code: "SC6901",
+    message: `${what}, so calls to ${count} dispatch dynamically: each call reads the method from the instance and boxes the receiver`,
+    loc,
+    hint,
   };
 }
 

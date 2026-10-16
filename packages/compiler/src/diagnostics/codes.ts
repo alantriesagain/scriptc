@@ -125,6 +125,7 @@ export const DIAGNOSTIC_CODES = {
   SC6104: "localized failure: slot held as a checked-dynamic value",
   SC6105: "performance: InlineArray field kept as an ordinary array",
   SC6201: "start-up failure that Node reports for the same program",
+  SC6901: "slow path: methods made replaceable",
   SC7001: "NoThrow contract on an async function or generator",
   SC7002: "Int32 contract value not provably int32",
   SC7003: "Int32 contract cannot be checked",

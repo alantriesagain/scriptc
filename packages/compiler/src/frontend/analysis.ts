@@ -324,6 +324,7 @@ export function analyzeWithFrontend(
         ...(lowered.performance !== undefined ? { performance: lowered.performance } : {}),
         ...(lowered.dynamicSlots !== undefined ? { dynamicSlots: lowered.dynamicSlots } : {}),
         ...(lowered.typeClaims !== undefined ? { typeClaims: lowered.typeClaims } : {}),
+        ...(lowered.slowPaths !== undefined ? { slowPaths: lowered.slowPaths } : {}),
         ...(lowered.unreached ? { unreached: lowered.unreached } : {}),
         ...(opts.coverage === "reached" ? { reachedOnly: true } : {}),
         ...(compiledPackages.length > 0 ? { npmStatic: compiledPackages } : {}),
