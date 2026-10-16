@@ -6,7 +6,7 @@ upstream as a pull request on its own; this file lives on its own branch too, `f
 `light-integration` is the release tag with every patch and this file merged; it is the compiler
 light's native build runs (`SCRIPTC=...`, see light's `native/README.md`).
 
-Current base: **v0.3.4** (`b5f73477`). Published 0.3.4 still has the problems all four fix.
+Current base: **v0.3.5** (`973362d0`). Bare v0.3.5 still has the problems all four fix.
 
 ## The patches
 
@@ -45,7 +45,8 @@ Three pieces must match the compiler's version (`packages/cli/package.json`):
 
 1. **The compiler**: `pnpm install` (when the lockfile changed), then `pnpm build`. Use the pnpm
    version upstream's CI pins (`npx -y pnpm@11.1.3 install --frozen-lockfile`); pnpm 10 rejects the
-   lockfile's `patchedDependencies` hash.
+   lockfile's `patchedDependencies` hash. Over a pnpm 10 install it asks before replacing
+   `node_modules`; without a terminal, add `--config.confirm-modules-purge=false`.
 2. **The runtime pack** (`packages/runtime-linux-x64-gnu`, built from `packages/runtime` C sources
    with zig 0.16.0):
    ```
@@ -68,7 +69,7 @@ Three pieces must match the compiler's version (`packages/cli/package.json`):
 ```
 cd ~/Projects/scriptc
 git fetch upstream --tags                       # upstream = https://github.com/vercel-labs/scriptc.git
-NEW=v0.3.5 OLD=v0.3.4                           # the new tag and the current base
+NEW=v0.3.6 OLD=v0.3.5                           # the new tag and the current base
 
 BRANCHES="ts-unknown-fields generic-method-slots census-typed-keys census-report"
 
@@ -98,19 +99,25 @@ Then verify, in this order:
      packages/compiler/test/class-method-mutations.test.ts packages/compiler/src/diagnostics/envelope.test.ts
    ```
 2. The whole corpus, in six parallel shards (one test file runs in one worker, so
-   `SCRIPTC_TEST_WORKERS` alone does not parallelize it; about 40 minutes):
+   `SCRIPTC_TEST_WORKERS` alone does not parallelize it; 40 to 80 minutes), under the node
+   `.node-version` pins (`nvm install 24.22.0`; under node 25, 82 programs fail with and without
+   the patches):
    ```
+   export PATH=$HOME/.nvm/versions/node/v24.22.0/bin:$PATH
    for i in 1 2 3 4 5 6; do SCRIPTC_TEST_SHARD=$i/6 pnpm exec vitest run tests/harness/llvm-differential.test.ts > shard-$i.log 2>&1 & done; wait
    grep -hE '^\s+× ' shard-*.log
    ```
    Any failure must also fail on the bare tag (`git checkout $NEW`, rebuild, run it with `-t`).
-   On v0.3.4 with node 25 the same 82 programs fail with and without the patches (node 24
-   behaviors the corpus pins: crypto, zlib, URL, fs, streams, `node24-*`, `process-version-pin`).
-   The sanitized lane (`SCRIPTC_SAN=1`) needs a clang that reads LLVM 22's IR; Ubuntu's clang 14
+   On v0.3.5 with node 24.22 every program passes; `timers-clear-many` can fail on a loaded
+   machine (it counts interval ticks against a timeout) and passes when run alone. The sanitized lane (`SCRIPTC_SAN=1`) needs a clang that reads LLVM 22's IR; Ubuntu's clang 14
    fails on every program.
 3. light, with this compiler: `SCRIPTC=scriptc-dev npm run verify` in `~/Projects/light`, then
    `native/pty.sh` and `node native/bench.js` against the binary.
 4. The harness: `SCRIPTC=scriptc-dev npm test`, `npm run coverage`, `npm run build`, and
-   `scripts/desktop.sh --selftest` in `~/Projects/writting-harness`.
+   `scripts/widecode.sh --selftest shell` (then `fake` and `fake-acp`) in
+   `~/Projects/writting-harness`. `scripts/desktop.sh --selftest` sends a real turn to Claude, so it
+   runs only when asked.
+   To leave a checkout another session is using alone, run 3 and 4 in worktrees of light and the
+   harness under one directory, beside a `light` (and `scriptc`) they can reach as `../light`.
 5. Check published `scriptc@<version>` against each patch's corpus program; when one passes
    unpatched, drop that branch from the list.
