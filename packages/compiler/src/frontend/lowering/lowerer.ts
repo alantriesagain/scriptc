@@ -95,6 +95,7 @@ import { installBuiltinStatics } from "./builtin-statics.js";
 import { functionKeepsRecordSources } from "./record-sources.js";
 import { exprFunctionReference } from "../../ir/function-references.js";
 import { everyStmtList, observeRecordLiteralRebuilds } from "../../ir/traverse.js";
+import { scanSlowPaths } from "./slow-paths.js";
 import { checkedClassAssertion } from "./class-assertions.js";
 import { narrowStoredClassValue, narrowGenericClassValue } from "./class-unions.js";
 import {
@@ -1009,6 +1010,9 @@ export interface LowerResult {
    * roots; a root name that resolves to no unit is absent from the map
    * (the export-map resolution reports it as SC4002). */
   libExportUnits?: ReadonlyMap<string, string>;
+  /** Sites that make the native program slower (SC69xx slow-path notes).
+   * Never failures. */
+  slowPaths?: ScrDiagnostic[];
 }
 
 export interface LowerOptions {
@@ -1678,6 +1682,9 @@ function lowerToIrWithIslands(
       dynamicSlots,
     };
   }
+  const slowPaths = scanSlowPaths(resultLowerer);
+  timing("slow-path-scan", { found: slowPaths.length });
+  if (slowPaths.length > 0) result = { ...result, slowPaths };
   // Contract types (@scriptc/types): written annotations, checked against
   // the IR by the compile pipeline (contracts/check.ts).
   // Acyclic object types name the IR unit the program lowered them to; a
@@ -3935,6 +3942,10 @@ export class Lowerer {
   readonly protocolDispatches = new Map<string, ProtocolDispatch>();
   /** Bindings no other function assigns (class-protocol-dispatch.ts). */
   readonly protocolOwnedBindings = new Map<ts.Symbol, boolean>();
+  /** Sites that can replace any method by name (an unknown key, reflection,
+   * a prototype): the census attributes every method to one of them, the
+   * slow-path report lists all. */
+  readonly anyMethodWriteSites: ts.Node[] = [];
   /** Field names whose complete source census stores only lexical arrows. */
   readonly receiverFreeCallbackFields = new Set<string>();
   /** Inferred JS methods participating in an override chain keep a vtable
