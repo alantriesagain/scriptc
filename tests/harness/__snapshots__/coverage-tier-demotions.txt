@@ -11,3 +11,8 @@ scriptc coverage tests/coverage-fixtures/tier-demotions.ts
       ×1  SC2020  'Number.prototype.toLocaleString at locale "de-DE"' is part of the standard library types but has no scriptc lowering yet
           at tests/coverage-fixtures/tier-demotions.ts:22:27
           hint: what lowers is the default locale (no argument) and the composed en-US form — other locales are ICU data the binary does not negotiate yet
+
+  slower natively   1 site (compiles and behaves like Node; makes calls slower)
+      ×1  SC6201  this site reaches methods through a prototype or as values, so calls to method 'norm' dispatch dynamically: each call reads the method from the instance and boxes the receiver
+          at tests/coverage-fixtures/tier-demotions.ts:10:1
+          hint: call the methods on instances instead of reading or replacing them

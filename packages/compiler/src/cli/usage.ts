@@ -38,14 +38,14 @@ Options:
                      (native-link-info implies --emit=obj and never links;
                      diagnostics prints the versioned JSON diagnostics
                      envelope for build and coverage)
-      --fail-on <blockers|divergences|dynamic|dynamic-slots|node-islands|eager-node-islands|island-gaps>
+      --fail-on <blockers|divergences|dynamic|dynamic-slots|slow-paths|node-islands|eager-node-islands|island-gaps>
                      coverage only: exit 1 when the entry path has blockers
                      (a build would fail), or also when it has Node
                      divergences, likely-hot functions that use untyped
-                     values (SC6101), dynamic slots (SC6104), any Node
-                     island (eager-node-islands is the same until deferred
-                     evaluation lands), or a gap island (a package scriptc
-                     should compile but cannot yet)
+                     values (SC6101), dynamic slots (SC6104), slow paths
+                     (SC6201), any Node island (eager-node-islands is the
+                     same until deferred evaluation lands), or a gap island
+                     (a package scriptc should compile but cannot yet)
       --backend <b>  code generator (llvm)
       --optimization <release|dev|speed>
                      native optimization posture (default: release/-O2). dev

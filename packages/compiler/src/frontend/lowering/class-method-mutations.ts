@@ -63,6 +63,9 @@ export function collectClassMethodMutations(
   const markUnknownKey = (site: ts.Node): void => {
     unknownKey = site;
     unknownKeySites.push(site);
+    // Every site that can replace any method, not only the one the census
+    // keeps: the slow-path report names each (frontend/lowering/slow-paths.ts).
+    lowerer.anyMethodWriteSites.push(site);
   };
   let numericKey: ts.Node | undefined;
   let unknownOwnField = false;

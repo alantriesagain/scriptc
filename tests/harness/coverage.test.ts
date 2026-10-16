@@ -175,6 +175,31 @@ test("dynamic-tier code in npm packages is summarized by package", () => {
   ]);
 });
 
+test("slow paths report as notes, never as blockers", async () => {
+  const { coverage, sourceTexts } = analyze(fixture("slow-paths.ts"));
+  expect(coverage.diagnostics).toEqual([]);
+  expect((coverage.slowPaths ?? []).map((d) => d.code)).toEqual(["SC6201", "SC6201"]);
+  expect(coveragePasses(coverage, "blockers")).toBe(true);
+  expect(coveragePasses(coverage, "divergences")).toBe(true);
+  expect(coveragePasses(coverage, "slow-paths")).toBe(false);
+  const envelope = coverageEnvelope(coverage, { compilerVersion: "test", sourceTexts });
+  expect(envelope.success).toBe(true);
+  expect(envelope.diagnostics.map((d) => [d.code, d.category, d.severity])).toEqual([
+    ["SC6201", "slow-path", "warning"],
+    ["SC6201", "slow-path", "warning"],
+  ]);
+  await expect(report(fixture("slow-paths.ts"))).toMatchFileSnapshot(
+    "__snapshots__/coverage-slow-paths.txt",
+  );
+});
+
+test("writes that cannot replace a method report no slow path", () => {
+  const { coverage } = analyze(fixture("no-slow-paths.ts"));
+  expect(coverage.diagnostics).toEqual([]);
+  expect(coverage.slowPaths ?? []).toEqual([]);
+  expect(coveragePasses(coverage, "slow-paths")).toBe(true);
+});
+
 test("statements of a signature-blocked function count as not static", () => {
   const { coverage } = analyze(fixture("blocked-signature.ts"));
   const un = coverage.unreached?.stats;

@@ -34,3 +34,11 @@ scriptc coverage tests/coverage-fixtures/node-islands-user-js.cjs
       ×1  SC8105  A write of 'Array.prototype.last' needs a mutable JavaScript object model, which native code does not have
           at tests/coverage-fixtures/node-islands-user-js.cjs:19:1
           hint: rewrite it as a class or typed object, or mark this module as a Node island in scriptc.nodeIslands.modules
+
+  slower natively   2 sites (compiles and behaves like Node; makes calls slower)
+      ×1  SC6201  this site reaches methods through a prototype or as values, so calls to method 'norm' dispatch dynamically: each call reads the method from the instance and boxes the receiver
+          at tests/coverage-fixtures/node-islands-user-js.cjs:7:1
+          hint: call the methods on instances instead of reading or replacing them
+      ×1  SC6201  this site reaches methods through a prototype or as values, so calls to method 'last' dispatch dynamically: each call reads the method from the instance and boxes the receiver
+          at tests/coverage-fixtures/node-islands-user-js.cjs:19:1
+          hint: call the methods on instances instead of reading or replacing them

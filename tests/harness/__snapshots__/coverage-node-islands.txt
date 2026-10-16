@@ -37,3 +37,11 @@ scriptc coverage tests/coverage-fixtures/node-islands/main.ts
       ×1  SC2013  cannot compile npm package 'ni-bundled' statically: its shipped JS carries build-transform markers (bundled/transpiled dist)
           at tests/coverage-fixtures/node-islands/main.ts:8:1
           hint: to compile it anyway, name it with --npm-static=ni-bundled (or --npm-static=ni-bundled... to include its dependencies)
+
+  slower natively   2 sites (compiles and behaves like Node; makes calls slower)
+      ×1  SC6201  this site reaches methods through a prototype or as values, so calls to method 'add' dispatch dynamically: each call reads the method from the instance and boxes the receiver
+          at tests/coverage-fixtures/node-islands/node_modules/ni-ctor/index.js:9:1
+          hint: call the methods on instances instead of reading or replacing them
+      ×1  SC6201  this site reaches methods through a prototype or as values, so calls to method 'total' dispatch dynamically: each call reads the method from the instance and boxes the receiver
+          at tests/coverage-fixtures/node-islands/node_modules/ni-ctor/index.js:12:1
+          hint: call the methods on instances instead of reading or replacing them
