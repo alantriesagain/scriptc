@@ -104,8 +104,10 @@ Then verify, in this order:
    grep -hE '^\s+× ' shard-*.log
    ```
    Any failure must also fail on the bare tag (`git checkout $NEW`, rebuild, run it with `-t`).
-   On v0.3.1 with node 25 the same 18 programs fail with and without the patches (node 24
-   behaviors the corpus pins: `node24-*`, `process-version-pin`, text codecs, `fs.statfs`).
+   On v0.3.4 with node 25 the same 82 programs fail with and without the patches (node 24
+   behaviors the corpus pins: crypto, zlib, URL, fs, streams, `node24-*`, `process-version-pin`).
+   The sanitized lane (`SCRIPTC_SAN=1`) needs a clang that reads LLVM 22's IR; Ubuntu's clang 14
+   fails on every program.
 3. light, with this compiler: `SCRIPTC=scriptc-dev npm run verify` in `~/Projects/light`, then
    `native/pty.sh` and `node native/bench.js` against the binary.
 4. The harness: `SCRIPTC=scriptc-dev npm test`, `npm run coverage`, `npm run build`, and
