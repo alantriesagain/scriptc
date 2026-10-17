@@ -8022,6 +8022,21 @@ export class Lowerer {
     // Checker answers for the fixed point's repeated element-ABI queries.
     // Only a binding's widened storage can change between passes.
     const checkerTypes = new Map<ts.Node, ts.Type>();
+    // A type parameter is free only inside a generic function (its own type
+    // parameters, a JSDoc `@template` included) or a class, whose `this`
+    // type is one.
+    const inGenericScope = (node: ts.Node): boolean => {
+      for (let scope = node.parent; scope; scope = scope.parent) {
+        if (ts.isClassDeclaration(scope) || ts.isClassExpression(scope)) return true;
+        if (!ts.isFunctionLike(scope)) continue;
+        const signature = panicSafe(
+          () => this.checker.getSignatureFromDeclaration(scope),
+          undefined,
+        );
+        if (!signature || signature.getTypeParameters().length > 0) return true;
+      }
+      return false;
+    };
     // Mapping a type can lower a local class expression. When that class is
     // unsupported, its diagnostic is already recorded and the element ABI
     // is unknown here; the program fails with that diagnostic.
@@ -8067,9 +8082,12 @@ export class Lowerer {
         return target?.kind === "array" ? [typeKey(target.elem)] : [];
       }
       if (mapped === null) {
+        if (!this.checker.isArrayType(checkerType)) return [];
         // An array whose element type is a type parameter: each
-        // instantiation picks its own element ABI.
-        return this.checker.isArrayType(checkerType) ? null : [];
+        // instantiation picks its own element ABI. Elsewhere, a JavaScript
+        // array whose element type does not map is a checked-dynamic value
+        // as a whole (dynFallbackType), which no native array shares.
+        return isJsSourceFile(node.getSourceFile()) && !inGenericScope(node) ? [] : null;
       }
       const arms =
         mapped.kind === "union" ? (this.unions.get(mapped.unionId)?.arms ?? []) : [mapped];
