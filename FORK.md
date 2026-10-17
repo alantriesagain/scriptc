@@ -6,7 +6,7 @@ upstream as a pull request on its own; this file lives on its own branch too, `f
 `light-integration` is the release tag with every patch and this file merged; it is the compiler
 light's native build runs (`SCRIPTC=...`, see light's `native/README.md`).
 
-Current base: **v0.3.5** (`973362d0`). Bare v0.3.5 still has the problems all eight fix.
+Current base: **v0.3.6** (`fab1a29b3`). Bare v0.3.6 still has the problems all eight fix.
 
 ## The patches
 
@@ -73,7 +73,7 @@ Three pieces must match the compiler's version (`packages/cli/package.json`):
 ```
 cd ~/Projects/scriptc
 git fetch upstream --tags                       # upstream = https://github.com/vercel-labs/scriptc.git
-NEW=v0.3.6 OLD=v0.3.5                           # the new tag and the current base
+NEW=v0.3.7 OLD=v0.3.6                           # the new tag and the current base
 
 BRANCHES="ts-unknown-fields generic-method-slots census-typed-keys census-report generic-record-return async-return-union generic-unknown-fields async-dynamic-return"
 
