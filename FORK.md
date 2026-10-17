@@ -6,7 +6,7 @@ upstream as a pull request on its own; this file lives on its own branch too, `f
 `light-integration` is the release tag with every patch and this file merged; it is the compiler
 light's native build runs (`SCRIPTC=...`, see light's `native/README.md`).
 
-Current base: **v0.3.5** (`973362d0`). Bare v0.3.5 still has the problems all four fix.
+Current base: **v0.3.5** (`973362d0`). Bare v0.3.5 still has the problems all six fix.
 
 ## The patches
 
@@ -16,6 +16,8 @@ Current base: **v0.3.5** (`973362d0`). Bare v0.3.5 still has the problems all fo
 | `generic-method-slots` | When a write can replace methods by name, a method read through a receiver whose class can hold a generic class, a generic instantiation, a mixin instance or a subclass of one checks the instance's property bag for an own entry and falls back to the declared method, instead of reading the bag alone (those classes have no prototype data behind it, so the read gave `undefined`: "is not a function"). A method really replaced on one instance stays replaced. These reads no longer build the base class's prototype data (it broke a later `Object.keys`). Replaces the v0.3.2 version, which kept native dispatch for the whole family and so ignored real replacements, on plain base instances too. | `packages/compiler/src/frontend/lowering/class-prototypes.ts` (`prototypeMethodRead`), `class-callbacks.ts`, `class-dynamic-dispatch.ts` (two reads) | corpus `4945-generic-method-slots.ts` and its ts7 order baseline | `Signal<T>` and `Computed<T>` crashed natively ("this._track is not a function") whenever the program held a write that makes methods replaceable. | issue #963 (the same bug), PR #1150 |
 | `census-typed-keys` | The method census reads a computed key's type as written (`slots[i as number]`, `slots[k!]`) when it decides between a number key, a symbol key and a key that can be any string. Literal names still come from the operand, so `target[k as string]` with `k: "a" \| "b"` still names only `a` and `b` (the v0.3.2 version lost them). | `packages/compiler/src/frontend/lowering/class-method-mutations.ts` | three tests in `packages/compiler/test/class-method-mutations.test.ts` | One such write in light (`oldParts[(oldIndex as number)] = null`) made all 176 methods dispatch dynamically, about seven times slower. | issue #1148, PR #1152 |
 | `census-report` | Coverage reports writes that make methods replaceable as slow paths (SC7001, a new SC7xxx band of notes) with the methods they affect and a hint; every such site is listed. `--fail-on=slow-paths` fails on them and on blockers. The diagnostics envelope gives them a `slow-path` category and `warning` severity; the coverage and CLI docs describe them. | `class-method-mutations.ts` (`noteAnyMethodWrite`), `frontend/lowering/slow-paths.ts` (new), `lowerer.ts` (`anyMethodWriteSites`, `slowPaths`), `frontend/analysis.ts`, `coverage/report.ts`, `diagnostics/diagnostic.ts` (`replaceableMethodsDiag`), `diagnostics/envelope.ts`, `cli/command.ts`, `cli/usage.ts`, `docs/content/docs/{coverage,cli}.mdx` | `tests/harness/coverage.test.ts` (two tests), fixtures `coverage-fixtures/slow-paths.ts` and `no-slow-paths.ts`, snapshot `coverage-slow-paths.txt`, `envelope.test.ts` | Coverage said "fully static" while every call was several times slower. light's and the harness's coverage gates run `--fail-on=slow-paths`. | issue #1149, PR #1153 |
+| `generic-record-return` | A call of a JavaScript generic function (a JSDoc `@template`, or a generic type from a `.ts` file over a JavaScript body) whose instantiated return type does not map returns the checked-dynamic value a non-generic JavaScript function returns, instead of fencing the call with SC2009 (which names a member of the returned record). The call route, the pinned-value route and async generics (the promise ABI stays) share it; a result that is itself a generic function keeps its SC1090 fence, and TypeScript declarations keep their diagnostic. | `packages/compiler/src/frontend/lowering/generic-functions.ts` (`instanceReturnType`, `genericCallInstance`, `genericValueInstance`) | corpus `5791-jsdoc-generic-unmapped-return.js` and its ts7 order baseline | light's `defineModel(name, schema)` (`@template {ModelSchema} S`, returning `ModelApi<RowOf<S>, ModelSchema>`) fenced every model definition, while the same body behind a non-generic wrapper compiled. | not offered yet |
+| `async-return-union` | `Promise.all`'s result holds `undefined` only where an entry is a hole or `undefined` (a typed promise settles with a value of its own type), instead of always. The old fact landed on the result's element type, so with `rows = await Promise.all(rows.map((row) => load(row, includes)))` the callback's `row`, `load`'s parameter and, through an early `return row`, `load`'s result widened to `Promise<T \| undefined>` while the callback's return became `Promise<T> \| undefined`: SC2003, and in JavaScript a deferred site plus SC9001 on a computed-key write in a loop over the result. `Promise.allSettled` keeps the old fact. | `packages/compiler/src/frontend/lowering/runtime-optional-elements.ts` (`builtContents`) | corpus `4946-async-early-return-promise-all.ts`, `4947-async-early-return-promise-all.js` and their ts7 order baselines; one test in `packages/compiler/test/runtime-optional-precision.test.ts` | light's `loadRelationshipsForMany` gathers `loadRelationships` results with `Promise.all` and writes computed keys over them; it did not build natively. | not offered yet (the fact came in with #784) |
 
 On v0.3.2 `census-typed-keys` and `census-report` were one branch, `census-report`; they are split so each can be offered upstream on its own. `light-integration-v0.3.2` keeps the old combination.
 
@@ -71,13 +73,15 @@ cd ~/Projects/scriptc
 git fetch upstream --tags                       # upstream = https://github.com/vercel-labs/scriptc.git
 NEW=v0.3.6 OLD=v0.3.5                           # the new tag and the current base
 
-BRANCHES="ts-unknown-fields generic-method-slots census-typed-keys census-report"
+BRANCHES="ts-unknown-fields generic-method-slots census-typed-keys census-report generic-record-return async-return-union"
 
 # 1. Is a patch already upstream? Each prints nothing once its change is in NEW.
 for b in $BRANCHES; do echo "== $b"; git cherry $NEW $b; done
 git log --oneline $OLD..$NEW -- packages/compiler/src/frontend/lowering/lower-classes.ts \
   packages/compiler/src/frontend/lowering/class-callbacks.ts \
-  packages/compiler/src/frontend/lowering/class-method-mutations.ts
+  packages/compiler/src/frontend/lowering/class-method-mutations.ts \
+  packages/compiler/src/frontend/lowering/generic-functions.ts \
+  packages/compiler/src/frontend/lowering/runtime-optional-elements.ts
 
 # 2. Move each remaining patch, and this file, onto the new tag (resolve conflicts per branch).
 #    Drop a branch from BRANCHES (and from the table above) once step 1 shows it upstream.
@@ -94,9 +98,10 @@ Then verify, in this order:
 
 1. The patches' own tests:
    ```
-   SCRIPTC_TEST_WORKERS=2 pnpm exec vitest run tests/harness/llvm-differential.test.ts -t '494[45]'
+   SCRIPTC_TEST_WORKERS=2 pnpm exec vitest run tests/harness/llvm-differential.test.ts -t '494[4-7]|5791'
    pnpm exec vitest run tests/harness/coverage.test.ts tests/harness/diagnostics.test.ts \
-     packages/compiler/test/class-method-mutations.test.ts packages/compiler/src/diagnostics/envelope.test.ts
+     packages/compiler/test/class-method-mutations.test.ts packages/compiler/src/diagnostics/envelope.test.ts \
+     packages/compiler/test/runtime-optional-precision.test.ts
    ```
 2. The whole corpus, in six parallel shards (one test file runs in one worker, so
    `SCRIPTC_TEST_WORKERS` alone does not parallelize it; 40 to 80 minutes), under the node
