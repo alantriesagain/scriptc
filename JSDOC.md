@@ -14,6 +14,8 @@ scriptc treats a JavaScript file more loosely than TypeScript: a JSDoc type that
 | 6 | Values from `Object.entries` captured by a closure defer ("runtime-optional capture whose narrowed value type is not representable") | unknown | open, worked around in light; not reduced | not drafted |
 | 7 | A site JavaScript defers lets the build continue into an internal compiler error at a later site | yes (by construction: TypeScript stops at the first error) | fixed for the case seen (`async-return-union`) | covered by the `Promise.all` issue |
 | 8 | JSDoc-typed JavaScript classes compile 70 to 160 times slower than the same TypeScript | yes | known upstream | vercel-labs/scriptc#934 |
+| 9 | One possibly undefined value stored into a JavaScript array whose element type does not map makes every array in the program count as possibly undefined | yes (the fallback is JavaScript's) | fixed in the fork: `async-return-union` (`6b01f0f90`) | to be added to the `Promise.all` issue |
+| 10 | An async function that returns a dynamic value which is a promise fails at run time (`expected object at $, got Promise`) | likely (dynamic values come from unmappable JSDoc types); TypeScript untested | fix in progress: `async-dynamic-return` | not drafted |
 
 ## 1. A generic JSDoc function whose return type does not map refuses every call
 
@@ -102,6 +104,14 @@ In TypeScript a site that does not map is a build error; in JavaScript it is def
 ## 8. JSDoc-typed JavaScript classes compile far slower than TypeScript
 
 Reported upstream as vercel-labs/scriptc#934 (70 to 160 times slower); why light's core moved to TypeScript and needed the fork's class patches.
+
+## 9. An unmappable JavaScript array spreads "possibly undefined" to every array
+
+Light's `types/validate.js` has `Object.fromEntries(Object.entries(schema).filter(([_, prop]) => "virtual" in prop))`. The element type `[string, TypeDefinition]` has no native layout, and for such an array the runtime-optional analysis answered "unknown" (`arrayKeysUnsafe` in `lowerer.ts`), an answer meant for element types that are type parameters. `Object.entries` can list undefined values and `filter` keeps that, so storing into the "unknown" element type set a global flag: every native array in the program counted as possibly holding undefined. In light that widened the store's `Row[]` and ended in SC2003 and SC9001 in `relationship-loader.js`, in any program that imports `validate.js`. Fixed on `async-return-union` (`6b01f0f90`, corpus `4948-js-unmapped-element-arrays.js`): outside a generic function or a class, a JavaScript array whose element type does not map no longer counts toward native arrays' facts.
+
+## 10. An async function that returns a dynamic value which is a promise
+
+When an async function returns a value of dynamic type, the compiler checks it against the declared return type directly; only promises with a static type are awaited first. A dynamic value that is a promise is rejected: `Uncaught TypeError: expected object at $, got Promise`. In light it stops the native model probe at the first write: `store.js` returns `uploadFiles(...)`, `adapterFor(model).count(...)`, `adapter.exists(...)` and `facets(...)`, which are dynamic because `ModelSchema` and `StorageAdapter` do not map. `return await` at those lines makes the native output match Node. The compiler fix (resolve with `async.awaitDyn` before the check, without an extra microtask turn for a non-promise) is in progress as `async-dynamic-return`.
 
 ## Also seen, not specific to JSDoc
 
