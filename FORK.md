@@ -3,8 +3,10 @@
 This fork carries patches to scriptc that light (and the apps built on it) need before a scriptc
 release has them. Each patch is one branch on top of an upstream release tag, so it can be offered
 upstream as a pull request on its own; this file lives on its own branch too, `fork-docs`.
-`light-integration` is the release tag with every patch and this file merged; it is the compiler
-light's native build runs (`SCRIPTC=...`, see light's `native/README.md`).
+`light-integration` is the release tag with every patch and this file cherry-picked on top, in the
+order of the table below, so its log is the release's log plus one commit per change; it is the
+compiler light's native build runs (`SCRIPTC=...`, see light's `native/README.md`). `refork.sh`
+rebuilds all of it on a new release.
 
 Current base: **v0.3.6** (`fab1a29b3`). Bare v0.3.6 still has the problems all eight fix.
 
@@ -29,8 +31,8 @@ methods join the method-write census). It slows light's benchmark about twofold,
 Upstream context: vercel-labs/scriptc#934 (JSDoc-typed JavaScript classes compile 70 to 160 times
 slower than the same TypeScript), which is why light moved to TypeScript and needed these patches.
 
-For pull requests, each patch is also cherry-picked onto upstream `main` as `pr/<branch>`, on
-`1b3ed0bc6`, and pushed to this fork (`origin`); the numbers above are vercel-labs/scriptc's.
+For pull requests, each patch branch is pushed to this fork (`origin`) as `pr/<branch>`, and
+`main` on the fork is the upstream release itself; the numbers above are vercel-labs/scriptc's.
 
 ## Building the fork for development
 
@@ -70,32 +72,31 @@ Three pieces must match the compiler's version (`packages/cli/package.json`):
 
 ## Re-patching on a new scriptc release
 
+`./refork.sh [<ref>] [--no-build]`, from a clean checkout of this fork, does it:
+
+1. Fetches upstream with its tags and takes the newest `v*` tag as the base, or `<ref>`. A ref past
+   a tag is refused when `native/` moved since that tag: the published LLVM helper would no longer
+   match. `main` becomes that commit, so a push of `main` mirrors upstream.
+2. Keeps the old `light-integration` as `light-integration-prev`, then rebases every patch branch
+   from its old base onto the new one (`generic-unknown-fields` onto the rebased
+   `ts-unknown-fields`). A conflict stops the script inside that branch: resolve it, `git rebase
+   --continue`, run the script again.
+3. Writes the new base into this file on `fork-docs` ("Rebase the fork on <tag>").
+4. Rebuilds `light-integration` as the base plus each patch's commits cherry-picked in the order of
+   `PATCHES` in the script (the table's order, `fork-docs` last) and leaves the checkout on it.
+5. Unless `--no-build`: `pnpm install` when the lockfile changed, `pnpm build`, the runtime pack
+   with zig (`$ZIG` names the zig directory; the default is the path above), and the published LLVM
+   helper for the new version when the one on disk reports another.
+
+Before a run, `for b in <branches>; do git cherry <tag> $b; done` names the patches upstream took as
+they are; step 5 of the verification below finds the ones it fixed another way. Drop such a branch
+from `PATCHES` in the script and from the table.
+
+After a run, push the same shape to this fork; every branch is rewritten, so the push is forced:
+
 ```
-cd ~/Projects/scriptc
-git fetch upstream --tags                       # upstream = https://github.com/vercel-labs/scriptc.git
-NEW=v0.3.7 OLD=v0.3.6                           # the new tag and the current base
-
 BRANCHES="ts-unknown-fields generic-method-slots census-typed-keys census-report generic-record-return async-return-union generic-unknown-fields async-dynamic-return"
-
-# 1. Is a patch already upstream? Each prints nothing once its change is in NEW.
-for b in $BRANCHES; do echo "== $b"; git cherry $NEW $b; done
-git log --oneline $OLD..$NEW -- packages/compiler/src/frontend/lowering/lower-classes.ts \
-  packages/compiler/src/frontend/lowering/class-callbacks.ts \
-  packages/compiler/src/frontend/lowering/class-method-mutations.ts \
-  packages/compiler/src/frontend/lowering/generic-functions.ts \
-  packages/compiler/src/frontend/lowering/runtime-optional-elements.ts
-
-# 2. Move each remaining patch, and this file, onto the new tag (resolve conflicts per branch).
-#    Drop a branch from BRANCHES (and from the table above) once step 1 shows it upstream.
-OLD_TS=$(git rev-parse ts-unknown-fields)          # generic-unknown-fields sits on ts-unknown-fields
-for b in $BRANCHES fork-docs; do [ "$b" = generic-unknown-fields ] || git rebase --onto $NEW $OLD $b; done
-git rebase --onto ts-unknown-fields $OLD_TS generic-unknown-fields
-
-# 3. Rebuild the combined branch, then update "Current base" in this file on fork-docs.
-git branch -f light-integration $NEW && git checkout light-integration
-git merge --no-edit $BRANCHES fork-docs
-
-# 4. Rebuild: compiler, runtime pack, LLVM helper (above).
+git push -f origin main light-integration fork-docs $(for b in $BRANCHES; do echo $b:pr/$b; done)
 ```
 
 Then verify, in this order:
@@ -103,10 +104,14 @@ Then verify, in this order:
 1. The patches' own tests:
    ```
    SCRIPTC_TEST_WORKERS=2 pnpm exec vitest run tests/harness/llvm-differential.test.ts -t '494[4-9]|4956|5791|5813'
-   pnpm exec vitest run tests/harness/coverage.test.ts tests/harness/diagnostics.test.ts \
+   pnpm exec vitest run tests/harness/diagnostics.test.ts \
      packages/compiler/test/class-method-mutations.test.ts packages/compiler/src/diagnostics/envelope.test.ts \
      packages/compiler/test/runtime-optional-precision.test.ts
+   for i in 1 2 3 4 5 6; do SCRIPTC_TEST_SHARD=$i/6 pnpm exec vitest run tests/harness/coverage.test.ts > coverage-$i.log 2>&1 & done; wait
+   grep -hE '^\s+× ' coverage-*.log
    ```
+   `coverage.test.ts` sweeps the whole corpus inside one test with a fixed 600 s limit, which only
+   fits in shards on this machine (about twelve minutes for the six).
 2. The whole corpus, in six parallel shards (one test file runs in one worker, so
    `SCRIPTC_TEST_WORKERS` alone does not parallelize it; 40 to 80 minutes), under the node
    `.node-version` pins (`nvm install 24.22.0`; under node 25, 82 programs fail with and without
@@ -116,7 +121,10 @@ Then verify, in this order:
    for i in 1 2 3 4 5 6; do SCRIPTC_TEST_SHARD=$i/6 pnpm exec vitest run tests/harness/llvm-differential.test.ts > shard-$i.log 2>&1 & done; wait
    grep -hE '^\s+× ' shard-*.log
    ```
-   Any failure must also fail on the bare tag (`git checkout $NEW`, rebuild, run it with `-t`).
+   Leave this checkout on `light-integration` while it runs: the compiler hashes its own source
+   tree per program, and a file missing from the tree (a checkout of the bare tag, say) fails that
+   program with ENOENT. Any failure must also fail on the bare tag (`git checkout $NEW`, rebuild,
+   run it with `-t`), or on the published `scriptc@<version>` with `scriptc run`.
    On v0.3.5 with node 24.22 every program passes; `timers-clear-many` can fail on a loaded
    machine (it counts interval ticks against a timeout) and passes when run alone. The sanitized lane (`SCRIPTC_SAN=1`) needs a clang that reads LLVM 22's IR; Ubuntu's clang 14
    fails on every program.
