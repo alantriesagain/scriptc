@@ -6,7 +6,7 @@ upstream as a pull request on its own; this file lives on its own branch too, `f
 `light-integration` is the release tag with every patch and this file merged; it is the compiler
 light's native build runs (`SCRIPTC=...`, see light's `native/README.md`).
 
-Current base: **v0.3.5** (`973362d0`). Bare v0.3.5 still has the problems all six fix.
+Current base: **v0.3.5** (`973362d0`). Bare v0.3.5 still has the problems all seven fix.
 
 ## The patches
 
@@ -18,6 +18,7 @@ Current base: **v0.3.5** (`973362d0`). Bare v0.3.5 still has the problems all si
 | `census-report` | Coverage reports writes that make methods replaceable as slow paths (SC7001, a new SC7xxx band of notes) with the methods they affect and a hint; every such site is listed. `--fail-on=slow-paths` fails on them and on blockers. The diagnostics envelope gives them a `slow-path` category and `warning` severity; the coverage and CLI docs describe them. | `class-method-mutations.ts` (`noteAnyMethodWrite`), `frontend/lowering/slow-paths.ts` (new), `lowerer.ts` (`anyMethodWriteSites`, `slowPaths`), `frontend/analysis.ts`, `coverage/report.ts`, `diagnostics/diagnostic.ts` (`replaceableMethodsDiag`), `diagnostics/envelope.ts`, `cli/command.ts`, `cli/usage.ts`, `docs/content/docs/{coverage,cli}.mdx` | `tests/harness/coverage.test.ts` (two tests), fixtures `coverage-fixtures/slow-paths.ts` and `no-slow-paths.ts`, snapshot `coverage-slow-paths.txt`, `envelope.test.ts` | Coverage said "fully static" while every call was several times slower. light's and the harness's coverage gates run `--fail-on=slow-paths`. | issue #1149, PR #1153 |
 | `generic-record-return` | A call of a JavaScript generic function (a JSDoc `@template`, or a generic type from a `.ts` file over a JavaScript body) whose instantiated return type does not map returns the checked-dynamic value a non-generic JavaScript function returns, instead of fencing the call with SC2009 (which names a member of the returned record). The call route, the pinned-value route and async generics (the promise ABI stays) share it; a result that is itself a generic function keeps its SC1090 fence, and TypeScript declarations keep their diagnostic. | `packages/compiler/src/frontend/lowering/generic-functions.ts` (`instanceReturnType`, `genericCallInstance`, `genericValueInstance`) | corpus `5791-jsdoc-generic-unmapped-return.js` and its ts7 order baseline | light's `defineModel(name, schema)` (`@template {ModelSchema} S`, returning `ModelApi<RowOf<S>, ModelSchema>`) fenced every model definition, while the same body behind a non-generic wrapper compiled. | not offered yet |
 | `async-return-union` | `Promise.all`'s result holds `undefined` only where an entry is a hole or `undefined` (a typed promise settles with a value of its own type), instead of always. The old fact landed on the result's element type, so with `rows = await Promise.all(rows.map((row) => load(row, includes)))` the callback's `row`, `load`'s parameter and, through an early `return row`, `load`'s result widened to `Promise<T \| undefined>` while the callback's return became `Promise<T> \| undefined`: SC2003, and in JavaScript a deferred site plus SC9001 on a computed-key write in a loop over the result. `Promise.allSettled` keeps the old fact. A JavaScript array whose element type does not map (a dynamic value as a whole) no longer counts toward native arrays' facts outside a generic function or a class: one possibly undefined value stored into such an array (a `filter` over `Object.entries`) made every array in the program count as possibly undefined. | `packages/compiler/src/frontend/lowering/runtime-optional-elements.ts` (`builtContents`), `lowerer.ts` (`arrayKeysUnsafe`, `inGenericScope`) | corpus `4946-async-early-return-promise-all.ts`, `4947-async-early-return-promise-all.js`, `4948-js-unmapped-element-arrays.js` and their ts7 order baselines; one test in `packages/compiler/test/runtime-optional-precision.test.ts` | light's `loadRelationshipsForMany` gathers `loadRelationships` results with `Promise.all` and writes computed keys over them; it did not build natively. `types/validate.js`'s `virtual` filter over `[string, TypeDefinition]` entries widened the store's rows in every program that imports it. | not offered yet (the fact came in with #784) |
+| `generic-unknown-fields` (on `ts-unknown-fields`) | A field typed by a type parameter (`_value: T`, `T \| null`, `T[]`, a parameter property) compiles when the instantiation binds the parameter to the checked-dynamic kind (`unknown`, `object`, and every argument that maps to it, such as a `WeakMap`, since they share one instantiation), in the storage a field declared `unknown` uses, instead of SC1090 "'unknown'-typed class fields (instantiating class 'X' with <unknown>)". `Box<any>` and fields declared `any` or `WeakMap` stay refused. | `packages/compiler/src/frontend/lowering/lower-classes.ts` (`declaresUnknownField`) | corpus `5813-generic-unknown-fields.ts` and its ts7 order baseline | `Signal<T>` is built with `unknown` values (the store adapter's `signal(value)`), so every signal the controller layer makes was refused. | a follow-up to issue #1147 and PR #1151 |
 
 On v0.3.2 `census-typed-keys` and `census-report` were one branch, `census-report`; they are split so each can be offered upstream on its own. `light-integration-v0.3.2` keeps the old combination.
 
@@ -73,7 +74,7 @@ cd ~/Projects/scriptc
 git fetch upstream --tags                       # upstream = https://github.com/vercel-labs/scriptc.git
 NEW=v0.3.6 OLD=v0.3.5                           # the new tag and the current base
 
-BRANCHES="ts-unknown-fields generic-method-slots census-typed-keys census-report generic-record-return async-return-union"
+BRANCHES="ts-unknown-fields generic-method-slots census-typed-keys census-report generic-record-return async-return-union generic-unknown-fields"
 
 # 1. Is a patch already upstream? Each prints nothing once its change is in NEW.
 for b in $BRANCHES; do echo "== $b"; git cherry $NEW $b; done
@@ -98,7 +99,7 @@ Then verify, in this order:
 
 1. The patches' own tests:
    ```
-   SCRIPTC_TEST_WORKERS=2 pnpm exec vitest run tests/harness/llvm-differential.test.ts -t '494[4-8]|5791'
+   SCRIPTC_TEST_WORKERS=2 pnpm exec vitest run tests/harness/llvm-differential.test.ts -t '494[4-8]|5791|5813'
    pnpm exec vitest run tests/harness/coverage.test.ts tests/harness/diagnostics.test.ts \
      packages/compiler/test/class-method-mutations.test.ts packages/compiler/src/diagnostics/envelope.test.ts \
      packages/compiler/test/runtime-optional-precision.test.ts
