@@ -6,8 +6,10 @@ import * as ts from "../ts7/adapter.js";
  *
  * The proof is syntactic: a guard that dominates the store shows `i` is
  * below `xs.length`, either a condition `i < xs.length` (`xs.length > i`)
- * of an enclosing `if` or loop, or an earlier asserted read `xs[i]!`, which
- * throws for a missing index. Between the guard and the store nothing may
+ * of an enclosing `if` or loop, an earlier asserted read `xs[i]!`, which
+ * throws for a missing index, or `const i = xs.indexOf(v)` followed by a
+ * test that rules out -1 (an enclosing `if (i !== -1)`, or an earlier
+ * `if (i === -1) return`). Between the guard and the store nothing may
  * change the length or either operand: no call, construction, `await`,
  * `yield` or `delete`, and no write of `xs`, `i` or `xs.length`. A loop
  * crossed on the way repeats its whole body between the two. */
@@ -104,6 +106,8 @@ export function indexReadInBounds(
  * crossed) can change the operands. */
 function boundedBefore(statement: ts.Statement, operands: Operands, start: ts.Node[]): boolean {
   const between = [...start];
+  // A test on every path to the access has ruled out indexOf's -1.
+  let found = false;
   let child: ts.Node = statement;
   let parent: ts.Node | undefined = statement.parent;
   while (parent && !isFunctionBoundary(parent)) {
@@ -114,6 +118,9 @@ function boundedBefore(statement: ts.Statement, operands: Operands, start: ts.No
         const statement = statements[i]!;
         if (assertsSlot(statement, operands) && unchanged([statement, ...between], operands))
           return true;
+        if (found && searchesIndex(statement, operands) && unchanged(between, operands))
+          return true;
+        if (exitsWhenMissing(statement, operands.index)) found = true;
         between.push(statement);
       }
     } else if (ts.isIfStatement(parent)) {
@@ -123,6 +130,12 @@ function boundedBefore(statement: ts.Statement, operands: Operands, start: ts.No
         unchanged([parent.expression, ...between], operands)
       )
         return true;
+      if (
+        child === parent.thenStatement
+          ? testsFound(parent.expression, operands.index)
+          : testsMissing(parent.expression, operands.index)
+      )
+        found = true;
       between.push(parent.expression);
     } else if (
       ts.isWhileStatement(parent) ||
@@ -228,6 +241,105 @@ function boundedBy(condition: ts.Expression, operands: Operands): boolean {
   if (op === ts.SyntaxKind.GreaterThanToken)
     return isLengthOf(e.left, array, facts) && sameReference(e.right, index);
   return false;
+}
+
+/** `statement` declares `index` as `array.indexOf(...)` (or `lastIndexOf`):
+ * either -1 or a position below the length the array had then. */
+function searchesIndex(statement: ts.Statement, { array, index }: Operands): boolean {
+  const e = peel(index);
+  if (!ts.isVariableStatement(statement) || !ts.isIdentifier(e)) return false;
+  return statement.declarationList.declarations.nodes.some((declaration) => {
+    if (!ts.isIdentifier(declaration.name) || declaration.name.text !== e.text) return false;
+    const init = declaration.initializer && peel(declaration.initializer);
+    return (
+      init !== undefined &&
+      ts.isCallExpression(init) &&
+      !init.questionDotToken &&
+      ts.isPropertyAccessExpression(init.expression) &&
+      !init.expression.questionDotToken &&
+      (init.expression.name.text === "indexOf" || init.expression.name.text === "lastIndexOf") &&
+      sameReference(init.expression.expression, array)
+    );
+  });
+}
+
+function isMinusOne(node: ts.Expression): boolean {
+  const e = peel(node);
+  return (
+    ts.isPrefixUnaryExpression(e) &&
+    e.operator === ts.SyntaxKind.MinusToken &&
+    ts.isNumericLiteral(e.operand) &&
+    Number(e.operand.text) === 1
+  );
+}
+
+function isZero(node: ts.Expression): boolean {
+  const e = peel(node);
+  return ts.isNumericLiteral(e) && Number(e.text) === 0;
+}
+
+/** `condition` holding proves `index` is not -1. */
+function testsFound(condition: ts.Expression, index: ts.Expression): boolean {
+  const e = peel(condition);
+  if (!ts.isBinaryExpression(e)) return false;
+  const op = e.operatorToken.kind;
+  if (op === ts.SyntaxKind.AmpersandAmpersandToken)
+    return testsFound(e.left, index) || testsFound(e.right, index);
+  const compares = (value: ts.Expression, bound: ts.Expression): boolean =>
+    sameReference(value, index) && isMinusOne(bound);
+  if (
+    op === ts.SyntaxKind.ExclamationEqualsEqualsToken ||
+    op === ts.SyntaxKind.ExclamationEqualsToken
+  )
+    return compares(e.left, e.right) || compares(e.right, e.left);
+  if (op === ts.SyntaxKind.GreaterThanToken) return compares(e.left, e.right);
+  if (op === ts.SyntaxKind.LessThanToken) return compares(e.right, e.left);
+  if (op === ts.SyntaxKind.GreaterThanEqualsToken)
+    return sameReference(e.left, index) && isZero(e.right);
+  if (op === ts.SyntaxKind.LessThanEqualsToken)
+    return isZero(e.left) && sameReference(e.right, index);
+  return false;
+}
+
+/** `condition` failing proves `index` is not -1. */
+function testsMissing(condition: ts.Expression, index: ts.Expression): boolean {
+  const e = peel(condition);
+  if (!ts.isBinaryExpression(e)) return false;
+  const op = e.operatorToken.kind;
+  if (op === ts.SyntaxKind.BarBarToken)
+    return testsMissing(e.left, index) || testsMissing(e.right, index);
+  if (op === ts.SyntaxKind.EqualsEqualsEqualsToken || op === ts.SyntaxKind.EqualsEqualsToken)
+    return (
+      (sameReference(e.left, index) && isMinusOne(e.right)) ||
+      (sameReference(e.right, index) && isMinusOne(e.left))
+    );
+  if (op === ts.SyntaxKind.LessThanToken) return sameReference(e.left, index) && isZero(e.right);
+  if (op === ts.SyntaxKind.GreaterThanToken) return isZero(e.left) && sameReference(e.right, index);
+  return false;
+}
+
+/** `if (index === -1) <exit>` without an else: the code after it runs only
+ * when `index` is not -1. */
+function exitsWhenMissing(statement: ts.Statement, index: ts.Expression): boolean {
+  return (
+    ts.isIfStatement(statement) &&
+    statement.elseStatement === undefined &&
+    testsMissing(statement.expression, index) &&
+    alwaysExits(statement.thenStatement)
+  );
+}
+
+function alwaysExits(statement: ts.Statement): boolean {
+  if (
+    ts.isReturnStatement(statement) ||
+    ts.isThrowStatement(statement) ||
+    ts.isBreakStatement(statement) ||
+    ts.isContinueStatement(statement)
+  )
+    return true;
+  if (!ts.isBlock(statement)) return false;
+  const last = statement.statements.nodes[statement.statements.nodes.length - 1];
+  return last !== undefined && alwaysExits(last);
 }
 
 /** Evaluating `node` reads `array[index]!` on every path that completes. */

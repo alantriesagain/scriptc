@@ -143,3 +143,42 @@ test("a length-alias fact lets a cached length bound the read", () => {
   });
   expect(plain).toEqual([false, false]);
 });
+
+test("an index found by indexOf, with -1 ruled out first, bounds the store", () => {
+  expect(
+    stores(`function f(xs: (number | null)[], v: number, busy: boolean) {
+      const at = xs.indexOf(v);
+      if (at === -1) return;
+      if (busy) xs[at] = null;
+      const last = xs.lastIndexOf(v);
+      if (last !== -1) xs[last] = null;
+      const k = xs.indexOf(v);
+      if (k >= 0 && busy) { xs[k] = 0; }
+      const m = xs.indexOf(v);
+      if (m < 0) {} else xs[m] = 1;
+    }`),
+  ).toEqual([true, true, true, true]);
+});
+
+test("indexOf without a test of -1, of another array, or with a change in between, proves nothing", () => {
+  expect(
+    stores(`declare function shrink(): void;
+    function f(xs: (number | null)[], ys: number[], v: number) {
+      const a = xs.indexOf(v);
+      xs[a] = null;
+      const b = ys.indexOf(v);
+      if (b !== -1) xs[b] = null;
+      const c = xs.indexOf(v);
+      if (c === -1) shrink();
+      xs[c] = null;
+      const d = xs.indexOf(v);
+      if (d === -1) return;
+      xs.length = 0;
+      xs[d] = null;
+      const e = xs.indexOf(v);
+      if (e !== -1) { shrink(); xs[e] = null; }
+      const g = xs.findIndex((x) => x === v);
+      if (g !== -1) xs[g] = null;
+    }`),
+  ).toEqual([false, false, false, false, false, false]);
+});
