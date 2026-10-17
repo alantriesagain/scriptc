@@ -86,7 +86,9 @@ git log --oneline $OLD..$NEW -- packages/compiler/src/frontend/lowering/lower-cl
 
 # 2. Move each remaining patch, and this file, onto the new tag (resolve conflicts per branch).
 #    Drop a branch from BRANCHES (and from the table above) once step 1 shows it upstream.
-for b in $BRANCHES fork-docs; do git rebase --onto $NEW $OLD $b; done
+OLD_TS=$(git rev-parse ts-unknown-fields)          # generic-unknown-fields sits on ts-unknown-fields
+for b in $BRANCHES fork-docs; do [ "$b" = generic-unknown-fields ] || git rebase --onto $NEW $OLD $b; done
+git rebase --onto ts-unknown-fields $OLD_TS generic-unknown-fields
 
 # 3. Rebuild the combined branch, then update "Current base" in this file on fork-docs.
 git branch -f light-integration $NEW && git checkout light-integration
