@@ -6,7 +6,7 @@ upstream as a pull request on its own; this file lives on its own branch too, `f
 `light-integration` is the release tag with every patch and this file merged; it is the compiler
 light's native build runs (`SCRIPTC=...`, see light's `native/README.md`).
 
-Current base: **v0.3.5** (`973362d0`). Bare v0.3.5 still has the problems all seven fix.
+Current base: **v0.3.5** (`973362d0`). Bare v0.3.5 still has the problems all eight fix.
 
 ## The patches
 
@@ -19,6 +19,7 @@ Current base: **v0.3.5** (`973362d0`). Bare v0.3.5 still has the problems all se
 | `generic-record-return` | A call of a JavaScript generic function (a JSDoc `@template`, or a generic type from a `.ts` file over a JavaScript body) whose instantiated return type does not map returns the checked-dynamic value a non-generic JavaScript function returns, instead of fencing the call with SC2009 (which names a member of the returned record). The call route, the pinned-value route and async generics (the promise ABI stays) share it; a result that is itself a generic function keeps its SC1090 fence, and TypeScript declarations keep their diagnostic. | `packages/compiler/src/frontend/lowering/generic-functions.ts` (`instanceReturnType`, `genericCallInstance`, `genericValueInstance`) | corpus `5791-jsdoc-generic-unmapped-return.js` and its ts7 order baseline | light's `defineModel(name, schema)` (`@template {ModelSchema} S`, returning `ModelApi<RowOf<S>, ModelSchema>`) fenced every model definition, while the same body behind a non-generic wrapper compiled. | not offered yet |
 | `async-return-union` | `Promise.all`'s result holds `undefined` only where an entry is a hole or `undefined` (a typed promise settles with a value of its own type), instead of always. The old fact landed on the result's element type, so with `rows = await Promise.all(rows.map((row) => load(row, includes)))` the callback's `row`, `load`'s parameter and, through an early `return row`, `load`'s result widened to `Promise<T \| undefined>` while the callback's return became `Promise<T> \| undefined`: SC2003, and in JavaScript a deferred site plus SC9001 on a computed-key write in a loop over the result. `Promise.allSettled` keeps the old fact. A JavaScript array whose element type does not map (a dynamic value as a whole) no longer counts toward native arrays' facts outside a generic function or a class: one possibly undefined value stored into such an array (a `filter` over `Object.entries`) made every array in the program count as possibly undefined. | `packages/compiler/src/frontend/lowering/runtime-optional-elements.ts` (`builtContents`), `lowerer.ts` (`arrayKeysUnsafe`, `inGenericScope`) | corpus `4946-async-early-return-promise-all.ts`, `4947-async-early-return-promise-all.js`, `4948-js-unmapped-element-arrays.js` and their ts7 order baselines; one test in `packages/compiler/test/runtime-optional-precision.test.ts` | light's `loadRelationshipsForMany` gathers `loadRelationships` results with `Promise.all` and writes computed keys over them; it did not build natively. `types/validate.js`'s `virtual` filter over `[string, TypeDefinition]` entries widened the store's rows in every program that imports it. | not offered yet (the fact came in with #784) |
 | `generic-unknown-fields` (on `ts-unknown-fields`) | A field typed by a type parameter (`_value: T`, `T \| null`, `T[]`, a parameter property) compiles when the instantiation binds the parameter to the checked-dynamic kind (`unknown`, `object`, and every argument that maps to it, such as a `WeakMap`, since they share one instantiation), in the storage a field declared `unknown` uses, instead of SC1090 "'unknown'-typed class fields (instantiating class 'X' with <unknown>)". `Box<any>` and fields declared `any` or `WeakMap` stay refused. | `packages/compiler/src/frontend/lowering/lower-classes.ts` (`declaresUnknownField`) | corpus `5813-generic-unknown-fields.ts` and its ts7 order baseline | `Signal<T>` is built with `unknown` values (the store adapter's `signal(value)`), so every signal the controller layer makes was refused. | a follow-up to issue #1147 and PR #1151 |
+| `async-dynamic-return` | An async function with a typed result that returns a checked-dynamic value resolves its promise with that value, as JavaScript does, instead of checking the value against the result type directly (only statically typed promises were awaited first). A promise behind the value is adopted like a returned typed promise: the same microtask turns, after every crossed `finally`, outside the function's own `catch`; any other value settles the function at once, with no extra turn. Concise async arrow bodies follow the same rule. Before, such a return failed with "expected object at $, got Promise". | `packages/compiler/src/frontend/lowering/lowerer.ts` (`dynamicAsyncReturn`, `lowerReturnOf`, `lowerReturnValue`), `lower-functions.ts` (concise bodies) | corpus `4949-async-dynamic-returns.js` and its ts7 order baseline | light's store returned dynamic promises from typed async methods (`return uploadFiles(...)`, the adapter's `count` and `exists`); the model probe failed at its first `add`. | not offered yet |
 
 On v0.3.2 `census-typed-keys` and `census-report` were one branch, `census-report`; they are split so each can be offered upstream on its own. `light-integration-v0.3.2` keeps the old combination.
 
@@ -74,7 +75,7 @@ cd ~/Projects/scriptc
 git fetch upstream --tags                       # upstream = https://github.com/vercel-labs/scriptc.git
 NEW=v0.3.6 OLD=v0.3.5                           # the new tag and the current base
 
-BRANCHES="ts-unknown-fields generic-method-slots census-typed-keys census-report generic-record-return async-return-union generic-unknown-fields"
+BRANCHES="ts-unknown-fields generic-method-slots census-typed-keys census-report generic-record-return async-return-union generic-unknown-fields async-dynamic-return"
 
 # 1. Is a patch already upstream? Each prints nothing once its change is in NEW.
 for b in $BRANCHES; do echo "== $b"; git cherry $NEW $b; done
@@ -101,7 +102,7 @@ Then verify, in this order:
 
 1. The patches' own tests:
    ```
-   SCRIPTC_TEST_WORKERS=2 pnpm exec vitest run tests/harness/llvm-differential.test.ts -t '494[4-8]|5791|5813'
+   SCRIPTC_TEST_WORKERS=2 pnpm exec vitest run tests/harness/llvm-differential.test.ts -t '494[4-9]|5791|5813'
    pnpm exec vitest run tests/harness/coverage.test.ts tests/harness/diagnostics.test.ts \
      packages/compiler/test/class-method-mutations.test.ts packages/compiler/src/diagnostics/envelope.test.ts \
      packages/compiler/test/runtime-optional-precision.test.ts
