@@ -34,6 +34,29 @@ slower than the same TypeScript), which is why light moved to TypeScript and nee
 For pull requests, each patch branch is pushed to this fork (`origin`) as `pr/<branch>`, and
 `main` on the fork is the upstream release itself; the numbers above are vercel-labs/scriptc's.
 
+## Upstream after v0.3.6 (checked 2026-10-18, before v0.3.7)
+
+Upstream wrote its own versions of three of these fixes and credited this fork with `Co-authored-by: Alan Leal`: #1208 (fixes #1147), #1218 (fixes #1148) and #1232 (fixes #934, JavaScript classes compile like TypeScript ones). PRs #1150 to #1153 are still open and unmerged. No release has the fixes yet: `upstream/main` (`f9682f3ed`) is 178 commits past v0.3.6 and still says 0.3.6, so the fork stays on v0.3.6 with every patch until v0.3.7.
+
+Each patch's tests, run against an unpatched build of `f9682f3ed` (upstream's own corpus programs for the same fixes, 5930, 5932, 5933 and 5942, pass there):
+
+| Branch | Upstream | On `f9682f3ed` | At v0.3.7 |
+|---|---|---|---|
+| `census-typed-keys` | #1218 | `slots[i as number]` and `slots[i!]` pass. `target[k as string]` with `k: "a" \| "b"` still makes every method replaceable (#1218 reads the asserted type for literal names too); light has no such write. | Drop |
+| `ts-unknown-fields` | #1208 | 4944 passes except one field typed `(object \| null)[]` (#1208 does not look through a union inside an array). #1208 also covers static fields. Light has no such field. | Drop |
+| `generic-method-slots` | #1215 (fixes #963) | Direct reads pass. A method read on a generic instance through a receiver typed as its non-generic base (`const asBase: Dep = new Box(4); asBase.track()`) still throws "is not a function". `Signal<T> extends Dep` has that shape, but light reads only fields through `Dep` (`dep._subscribers`). | Drop if light's verify passes without it |
+| `generic-unknown-fields` | none | 5813 still SC1090. Its commit conflicts with #1208 in `lower-classes.ts`. | Port onto #1208's `classFieldStoresDyn` (in `lowerer.ts`); it no longer depends on `ts-unknown-fields` |
+| `census-report` | none (#1149 open) | No slow-path report | Keep |
+| `generic-record-return` | none | 5791 still SC2009 | Keep |
+| `async-return-union` | none | 4946, 4947, 4948, 4956 and the Promise.all unit test still fail (SC2003, SC9001) | Keep; a conflict in `runtime-optional-precision.test.ts` only (both sides append a test) |
+| `async-dynamic-return` | none | 4949: "expected object at $, got Promise" | Keep |
+
+`census-report`, `generic-record-return` and `async-dynamic-return` cherry-pick cleanly onto `f9682f3ed`. `census-report`'s note uses SC7001, which the contracts checker already uses (SC7001 to SC7008, on v0.3.6 too), so #1153 needs another code either way.
+
+Between v0.3.6 and `f9682f3ed`, `native/` changed only for WebAssembly (`emit.cpp`), so the published 0.3.6 LLVM helper builds that commit for linux-x64; `refork.sh` still refuses it as a base because `native/` moved.
+
+At v0.3.7: rerun this check against the release, drop the branches above from `PATCHES` and `DEP` in `refork.sh` and from the table, port `generic-unknown-fields`, then run the whole verification below. Not yet done upstream, since it posts publicly: comment on #1151 and #1152 as superseded and report the three gaps above (`(object | null)[]` fields, base-typed receivers, literal keys under `as string`).
+
 ## Building the fork for development
 
 The CLI runs from source (`packages/cli/dist/main.js`); light's tools reach it through a wrapper,
