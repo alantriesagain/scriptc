@@ -51,11 +51,32 @@ Each patch's tests, run against an unpatched build of `f9682f3ed` (upstream's ow
 | `async-return-union` | none | 4946, 4947, 4948, 4956 and the Promise.all unit test still fail (SC2003, SC9001) | Keep; a conflict in `runtime-optional-precision.test.ts` only (both sides append a test) |
 | `async-dynamic-return` | none | 4949: "expected object at $, got Promise" | Keep |
 
+### Rechecked 2026-10-19
+
+Still no v0.3.7: npm's latest is 0.3.6, the last GitHub release is v0.3.6, and `upstream/main` (`26946d6b2`, 569 commits past v0.3.6) still says 0.3.6. ctate closed #1151 and #1152 on 2026-10-18 as landed by #1208 and #1218 ("If you see a class field type that's still refused, send it over."); #1150 and #1153 are open with no review.
+
+On an unpatched build of `26946d6b2` (the 0.3.6 LLVM helper, a runtime pack built from that commit), every patch's tests fail as in the table above, except that 5791 now fails at run time ("values of type 'Api<Record<string, unknown>>' cannot be compiled: … member 'schema' has type 'Schema'") instead of with SC2009. Light's native entries do not build there: `native/index.js` stops at `Signal<unknown>` (SC1090 "'T'-typed class fields … instantiating class 'Signal' with <unknown>", what `generic-unknown-fields` fixes) and the uses it fences, and `examples/tasks/main.js` also at SC2003 in `model/relationship-loader.ts` (`async-return-union`). `coverage --fail-on` takes `blockers` or `divergences` only, so light's gate still needs `census-report`'s `slow-paths`. `native/` now changes `partition.cpp` too (how functions too large to inline are placed), not only WebAssembly: at v0.3.7, take the release's LLVM helper.
+
 `census-report`, `generic-record-return` and `async-dynamic-return` cherry-pick cleanly onto `f9682f3ed`. `census-report`'s note uses SC7001, which the contracts checker already uses (SC7001 to SC7008, on v0.3.6 too), so #1153 needs another code either way.
 
 Between v0.3.6 and `f9682f3ed`, `native/` changed only for WebAssembly (`emit.cpp`), so the published 0.3.6 LLVM helper builds that commit for linux-x64; `refork.sh` still refuses it as a base because `native/` moved.
 
 At v0.3.7: rerun this check against the release, drop the branches above from `PATCHES` and `DEP` in `refork.sh` and from the table, port `generic-unknown-fields`, then run the whole verification below. Not yet done upstream, since it posts publicly: comment on #1151 and #1152 as superseded and report the three gaps above (`(object | null)[]` fields, base-typed receivers, literal keys under `as string`).
+
+## Problems light hit that no patch covers (found 2026-10-18, on `light-integration`)
+
+Found while typing light without `any` and measuring its core with paired probes (light's `native/probes/pairs/`). Light works around each one; none is offered upstream yet.
+
+| Problem | Smallest form | Light's workaround |
+|---|---|---|
+| Internal compiler error "lowerer bug: unknown class B" in `instanceof` (fixed on `upstream/main` `26946d6b2`) | `class B { keys: unknown[] \| null = null }` in a union of classes, tested with `u instanceof B`. `unknown[] \| undefined`, `Array<unknown> \| null` and `readonly unknown[] \| null` fail the same way; `unknown[]`, `number[] \| null` and `unknown` compile. | `ItemsState` holds `keys: unknown[]` (empty when unkeyed) and `keyed: boolean`. |
+| SC1090 "'unknown'-typed class fields" for a field typed with a record alias that holds `unknown` | `type Def = { default: unknown }; class Slot { def: Def }`. A field typed `unknown`, or with a class that has an `unknown` field, compiles. | The store's `Slot` keeps the default, `pack` and `unpack` as its own fields. |
+| SC1090 "object spread of 'unknown' sources into an index-signature shape" | Two or more spread sources into a JSDoc-annotated union-valued index signature: `/** @type {{ [k: string]: string \| Shades }} */ const c = { ...a, ...D.colors }`. The same spread into an unannotated `const` compiles and has the same type. A single source compiles. | The theme's colour merge is not annotated. |
+| SC2002 "record shapes must match exactly or width-coerce" | A known-key record (`{ DEFAULT: string; bg: string }`) lifted into an index signature whose values are a union (`{ [k: string]: string \| Shades }`), as `@returns {Theme}` on a literal spreading the defaults did. Lifting into `Record<string, string>` or `Record<string, unknown>` compiles, and so does a literal written with that annotation. | The default theme's tables are annotated with their scale types, and `buildTheme`'s result type is inferred. |
+| A read of a missing key from a `Record<string, string>` throws natively (fixed on `upstream/main` by #1236) | `const r: Record<string, string> = { a: "x" }; r["b"]` throws "expected string at $, got undefined"; node answers `undefined`. TypeScript's index signature claims the key is present, and the native build checks the claim on every read. | Light's theme scales declare `string \| undefined` values. |
+| SC1090 "Function.prototype.bind on a function whose signature cannot cross the checked-value boundary" (fixed on `upstream/main` `26946d6b2`) | `typeof v === "function" ? (v as (...args: unknown[]) => unknown).bind(o) : v`. The same `bind` on the narrowed `Function` compiles. | `controller/define.ts` binds the narrowed `Function`; light's `types/lib.d.ts` types `Function.prototype.bind`'s result as `unknown`. |
+| Seven number parameters cost more than two objects | A frame diff calling `sgrBetween(fromNothing, fg, bg, attrs, nextFg, nextBg, nextAttrs)` per changed cell ran 2.7x slower natively than calling `sgrTransition(prev, next)` with two `Style` objects; under node it ran 0.8x. | The diff reuses two scratch `Style` objects. |
+| One loop pushing into two arrays costs more than two `.map` calls | `for (const item of raw) { values.push(...); keys.push(...); }` ran 1.9x slower natively than two `raw.map(...)`; under node 0.9x. | The keyed commit keeps its two `.map` calls. |
 
 ## Building the fork for development
 
@@ -64,11 +85,19 @@ The CLI runs from source (`packages/cli/dist/main.js`); light's tools reach it t
 
 ```
 #!/usr/bin/env bash
-SCRIPTC_NO_CACHE=1 exec node /home/alanleal/Projects/scriptc/packages/cli/dist/main.js "$@"
+fork=/home/alanleal/Projects/scriptc
+id="$(git -C "$fork" rev-parse --short HEAD 2>/dev/null || echo nogit)-$(stat -c %Y "$fork/packages/compiler/dist/index.js" 2>/dev/null || echo 0)"
+export SCRIPTC_CACHE_DIR="${SCRIPTC_CACHE_DIR:-$HOME/.cache/scriptc-fork/$id}"
+mkdir -p -m 700 "$SCRIPTC_CACHE_DIR" && chmod 700 "$SCRIPTC_CACHE_DIR"
+unset SCRIPTC_NO_CACHE
+exec node "$fork/packages/cli/dist/main.js" "$@"
 ```
 
-`SCRIPTC_NO_CACHE=1` matters: the build cache is keyed by the compiler's version, not its source,
-so a patched compiler would otherwise replay binaries the unpatched one built.
+The cache directory matters: the build cache is keyed by the compiler's version, not its source,
+so a patched compiler would replay binaries the unpatched one built from a shared cache. Naming
+the directory by the fork's commit and its build's time gives each build of the compiler a cache of
+its own (an unchanged program comes back from it in a second), and scriptc uses an override root
+only when it is private (mode 700).
 
 Three pieces must match the compiler's version (`packages/cli/package.json`):
 
