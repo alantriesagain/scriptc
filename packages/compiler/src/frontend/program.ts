@@ -61,6 +61,7 @@ import {
   projectDtsRuntimeSibling,
   resolveBareModule,
   resolveProjectModule,
+  resolveWorkspaceSourceModule,
   resolveTypeDirective,
   setProjectPathMappings,
   setProjectRealm,
@@ -125,9 +126,11 @@ import {
   clearWorkspacePackages,
   isRelativeSpecifier,
   isWorkspacePackageName,
+  isWorkspaceSourcePackage,
   npmPackageNameOf,
   packageNameOfSpecifier,
   registerWorkspacePackage,
+  registerWorkspaceSourcePackage,
   workspacePackageOfPath,
 } from "./workspace-registry.js";
 import {
@@ -5603,8 +5606,11 @@ function preflight7(load: LoadResult): {
       if (probed.has(key)) return;
       probed.add(key);
       const r = resolveBareModule(fromFile, spec);
-      if (r !== null && r.workspaceDir !== undefined)
+      if (r !== null && r.workspaceDir !== undefined) {
         registerWorkspacePackage(r.packageName, r.workspaceDir);
+        if (resolveWorkspaceSourceModule(fromFile, spec) !== null)
+          registerWorkspaceSourcePackage(r.packageName);
+      }
     };
     for (const sf of program.getImplementationSourceFiles()) {
       if (sf.isDeclarationFile || sf.fileName.endsWith(".json")) continue;
@@ -5663,11 +5669,18 @@ function preflight7(load: LoadResult): {
   const npmStaticFileSuppressed = (d: ts.Diagnostic): boolean =>
     d.fileName !== undefined && npmStaticPackageOfPath(d.fileName) !== null;
 
+  // JS inside a workspace package compiled from its TypeScript source
+  // (a bare import answered by a .ts file) is program source like that
+  // source: the package's own modules in their JavaScript spelling.
+  const unselectedWorkspaceJsFile = (file: string): boolean => {
+    const workspace = workspacePackageOfPath(file);
+    return workspace !== null && !isWorkspaceSourcePackage(workspace);
+  };
   const unselectedPackageJsFile = (file: string): boolean =>
     isJsSourceFileName(file) &&
     !entryPackageFile(file) &&
     npmStaticPackageOfPath(file) === null &&
-    (isNodeModulesPath(file) || workspacePackageOfPath(file) !== null);
+    (isNodeModulesPath(file) || unselectedWorkspaceJsFile(file));
   const nodeModulesJsSuppressed = (d: ts.Diagnostic): boolean =>
     d.fileName !== undefined && unselectedPackageJsFile(d.fileName);
   /* JSDoc TYPE positions in JS files are documentation Node never reads:
