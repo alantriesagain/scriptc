@@ -14,7 +14,7 @@ if [ -z "${REFORK_COPY:-}" ]; then
 fi
 cd "$(git rev-parse --show-toplevel)"
 
-PATCHES=(census-report generic-record-return async-return-union generic-unknown-fields async-dynamic-return workspace-source-js fork-docs)
+PATCHES=(census-report generic-record-return async-return-union generic-unknown-fields async-dynamic-return workspace-source-js abstract-method-lookups fork-docs)
 declare -A DEP=()
 
 BASE=""
