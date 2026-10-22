@@ -194,13 +194,12 @@ Then verify, in this order:
    On v0.3.5 with node 24.22 every program passes; `timers-clear-many` can fail on a loaded
    machine (it counts interval ticks against a timeout) and passes when run alone. The sanitized lane (`SCRIPTC_SAN=1`) needs a clang that reads LLVM 22's IR; Ubuntu's clang 14
    fails on every program.
-3. light, with this compiler: `SCRIPTC=scriptc-dev npm run verify` in `~/Projects/light`, then
-   `native/pty.sh` and `node native/bench.js` against the binary.
-4. The harness: `SCRIPTC=scriptc-dev npm test`, `npm run coverage`, `npm run build`, and
-   `scripts/widecode.sh --selftest shell` (then `fake` and `fake-acp`) in
-   `~/Projects/writting-harness`. `scripts/desktop.sh --selftest` sends a real turn to Claude, so it
+3. light, with this compiler: `SCRIPTC=scriptc-dev npm run verify` in `~/Projects/light` (its packages' gates included), then
+   `native/tui/pty.sh` and `node native/tui/bench.js` against the binary.
+4. widecode: `SCRIPTC=scriptc-dev pnpm verify`, then `pnpm light-native selftest widecode shell` (then `fake` and `fake-acp`) in
+   `~/Projects/widecode`. `pnpm light-native desktop desktop --selftest` sends a real turn to Claude, so it
    runs only when asked.
-   To leave a checkout another session is using alone, run 3 and 4 in worktrees of light and the
-   harness under one directory, beside a `light` (and `scriptc`) they can reach as `../light`.
+   To leave a checkout another session is using alone, run 3 and 4 in worktrees of light and
+   widecode under one directory, beside a `light` (and `scriptc`) they can reach as `../light`.
 5. Check published `scriptc@<version>` against each patch's corpus program; when one passes
    unpatched, drop that branch from the list.
