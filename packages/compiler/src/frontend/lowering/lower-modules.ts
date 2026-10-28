@@ -646,8 +646,21 @@ export function collectNpmImports(lowerer: Lowerer, parts: FileParts[]): void {
       if (
         reexport === null &&
         (!ts.isImportDeclaration(stmt) || !ts.isStringLiteral(stmt.moduleSpecifier))
-      )
+      ) {
+        // A star or namespace re-export (`export * from "pkg"`) names
+        // nothing the re-exporting module could bind: an island package's
+        // is refused at the boundary instead of silently dropped. Any
+        // other module keeps the previous skip, and a type-only one is
+        // erased like the type-only named re-export above.
+        if (
+          ts.isExportDeclaration(stmt) &&
+          !stmt.isTypeOnly &&
+          stmt.moduleSpecifier !== undefined &&
+          ts.isStringLiteral(stmt.moduleSpecifier)
+        )
+          collectIslandImport(lowerer, fp.sf, stmt, stmt.moduleSpecifier.text);
         continue;
+      }
       const specNode =
         ts.isImportDeclaration(stmt) || ts.isExportDeclaration(stmt)
           ? stmt.moduleSpecifier

@@ -58,7 +58,7 @@ import {
   setActiveNodeIslands,
   type NodeIslandSet,
 } from "../../node-islands/boundary.js";
-import type { IslandModuleBinding } from "./lower-node-island.js";
+import type { IslandBinding, IslandModuleBinding } from "./lower-node-island.js";
 import { bindingSymbolOfRead, onlyForwarded, stripTypeWrappers } from "./typed-arguments.js";
 import {
   needsGeneralNodeStreams,
@@ -3758,6 +3758,9 @@ export class Lowerer {
   readonly nodeIslandLoads: { literal: IrExpr & { kind: "strLit" }; path: string }[] = [];
   /** Island handle bindings by symbol (lower-node-island.ts). */
   readonly islandHandleBindings = new Map<ts.Symbol, boolean>();
+  /** Names a native module re-exports from an island package, by the
+   * symbol an alias chain reaches (lower-node-island.ts). */
+  readonly islandReexports = new Map<ts.Symbol, IslandBinding>();
   /** `instanceof` expressions the island lowering already handles. */
   readonly islandInstanceofHandled = new Set<ts.Node>();
   /** NI-6: the modules shared with Node islands (lower-shared-modules.ts),
@@ -4549,6 +4552,9 @@ export class Lowerer {
     // NI-5: whether a symbol names an island handle binding depends only on
     // its declaration, so the answer is a memo keyed by symbol.
     "islandHandleBindings",
+    // The island names native modules re-export: a pure function of the
+    // program's modules, collected before lowering begins.
+    "islandReexports",
     // The modules shared with the islands (NI-6): a pure function of the
     // program's modules, computed once, and the TDZ flags its plan gives a
     // statement.

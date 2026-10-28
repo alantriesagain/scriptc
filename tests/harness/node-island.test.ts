@@ -381,7 +381,7 @@ test("a failed build reports the island build's errors", async () => {
 }, 300_000);
 
 // Needs no libnode pack: the build fails before linking.
-test("re-exporting a path-mapped island package reports the island boundary", async () => {
+test("a star re-export of a path-mapped island package reports the island boundary", async () => {
   const dir = join(outDir, "path-mapped-reexport");
   rmSync(dir, { recursive: true, force: true });
   const corpus = join(repoRoot, "tests/corpus/6839-node-island-path-mapped");

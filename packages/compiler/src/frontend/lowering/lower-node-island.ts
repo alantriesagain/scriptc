@@ -404,9 +404,43 @@ export function collectIslandImport(
   const path = islandModuleFile(islands, sf.fileName, spec, "import");
   if (path === null) return false;
   if (ts.isExportDeclaration(stmt)) {
-    lowerer.pushDiag(
-      nodeIslandBoundaryDiag(`re-exporting the Node island module '${spec}'`, locOf(stmt)),
-    );
+    // `export { Type } from "typebox"`: the re-exporting module loads the
+    // island module and every name it re-exports binds the island's own
+    // export, so importers of this module reach it through the alias chain
+    // (islandBindingOf). A namespace or star re-export has no name to bind.
+    const clause = stmt.exportClause;
+    if (stmt.isTypeOnly || clause === undefined || !ts.isNamedExports(clause)) {
+      lowerer.pushDiag(
+        nodeIslandBoundaryDiag(`re-exporting the Node island module '${spec}'`, locOf(stmt)),
+      );
+      return true;
+    }
+    lowerer.usesNodeIsland = true;
+    const exportLoc = locOf(stmt);
+    const exported = islandModuleGlobal(lowerer, path);
+    const initActions = lowerer.jsonInitActions.get(sf) ?? [];
+    lowerer.jsonInitActions.set(sf, initActions);
+    initActions.push({
+      kind: "assign",
+      localId: exported.global.id,
+      value: deferIslandModule(lowerer, path, exportLoc),
+      loc: exportLoc,
+    });
+    for (const el of clause.elements.nodes) {
+      if (el.isTypeOnly) continue;
+      const name = el.propertyName?.text ?? el.name.text;
+      // CommonJS named exports are the namespace's snapshot (below).
+      if (!exported.esm && name !== "default")
+        initActions.push(islandSnapshotAssign(lowerer, exported, name, exportLoc));
+      registerIslandReexport(
+        lowerer,
+        stmt,
+        el,
+        name === "default"
+          ? { kind: "default", module: exported }
+          : { kind: "named", module: exported, name },
+      );
+    }
     return true;
   }
   lowerer.usesNodeIsland = true;
@@ -448,29 +482,34 @@ export function collectIslandImport(
       return undefined;
     });
   }
-  {
-    for (const name of snapshotNames) {
-      if (name === "default") continue;
-      let g = binding.snapshots.get(name);
-      if (g === undefined) {
-        g = {
-          id: `%g.island.${lowerer.globalsList.length}`,
-          name,
-          type: DYN,
-          mutable: true,
-        };
-        lowerer.globalsList.push(g);
-        binding.snapshots.set(name, g);
-      }
-      actions.push({
-        kind: "assign",
-        localId: g.id,
-        value: islandGet(varRef(binding.global.id, DYN, loc), name, loc),
-        loc,
-      });
-    }
+  for (const name of snapshotNames) {
+    if (name === "default") continue;
+    actions.push(islandSnapshotAssign(lowerer, binding, name, loc));
   }
   return true;
+}
+
+/** A CommonJS island name's snapshot global and the %init action that
+ * assigns it once the module evaluated (Node's namespace snapshots named
+ * exports). */
+function islandSnapshotAssign(
+  lowerer: Lowerer,
+  binding: IslandModuleBinding,
+  name: string,
+  loc: SrcLoc,
+): IrStmt {
+  let g = binding.snapshots.get(name);
+  if (g === undefined) {
+    g = { id: `%g.island.${lowerer.globalsList.length}`, name, type: DYN, mutable: true };
+    lowerer.globalsList.push(g);
+    binding.snapshots.set(name, g);
+  }
+  return {
+    kind: "assign",
+    localId: g.id,
+    value: islandGet(varRef(binding.global.id, DYN, loc), name, loc),
+    loc,
+  };
 }
 
 function islandGet(target: IrExpr, key: string, loc: SrcLoc): IrExpr {
@@ -483,11 +522,54 @@ function islandGet(target: IrExpr, key: string, loc: SrcLoc): IrExpr {
   };
 }
 
-type IslandBinding =
+export type IslandBinding =
   | { kind: "required"; module: IslandModuleBinding }
   | { kind: "namespace"; module: IslandModuleBinding }
   | { kind: "default"; module: IslandModuleBinding }
   | { kind: "named"; module: IslandModuleBinding; name: string };
+
+/** Records that `specifier`'s exported name binds `binding`: importers of
+ * the re-exporting module reach the island's own export through the alias
+ * chain, whatever they spell it (`export { Num as NumberSchema }`). The
+ * island's export symbol is the key a chain ends on, so it is registered
+ * beside the specifier's own symbol. */
+function registerIslandReexport(
+  lowerer: Lowerer,
+  stmt: ts.ExportDeclaration,
+  specifier: ts.ExportSpecifier,
+  binding: IslandBinding,
+): void {
+  const named = lowerer.checker.getSymbolAtLocation(specifier.name);
+  if (named !== undefined) lowerer.islandReexports.set(named, binding);
+  const moduleSpecifier = stmt.moduleSpecifier;
+  if (moduleSpecifier === undefined) return;
+  const moduleSymbol = lowerer.checker.getSymbolAtLocation(moduleSpecifier);
+  if (moduleSymbol === undefined) return;
+  const exported = lowerer.checker.getExportsOfModule(moduleSymbol);
+  const found = exported.find(
+    (s) => ts.symbolName(s) === (specifier.propertyName?.text ?? specifier.name.text),
+  );
+  if (found === undefined) return;
+  lowerer.islandReexports.set(found, binding);
+  if ((found.flags & ts.SymbolFlags.Alias) !== 0)
+    lowerer.islandReexports.set(lowerer.checker.getAliasedSymbol(found), binding);
+}
+
+/** The island binding an alias chain reaches, or null: a name re-exported
+ * by a native module resolves to the island's export symbol itself. */
+function islandReexportOf(lowerer: Lowerer, symbol: ts.Symbol | undefined): IslandBinding | null {
+  if (symbol === undefined || lowerer.islandReexports.size === 0) return null;
+  const seen = new Set<ts.Symbol>();
+  let s: ts.Symbol | undefined = symbol;
+  while (s !== undefined && !seen.has(s)) {
+    seen.add(s);
+    const bound = lowerer.islandReexports.get(s);
+    if (bound !== undefined) return bound;
+    if ((s.flags & ts.SymbolFlags.Alias) === 0) return null;
+    s = lowerer.checker.getAliasedSymbol(s);
+  }
+  return null;
+}
 
 function moduleSpecifierOf(decl: ts.Node | undefined): string | null {
   return ts.isImportDeclaration(decl) && ts.isStringLiteral(decl.moduleSpecifier)
@@ -506,6 +588,10 @@ function islandBindingOf(lowerer: Lowerer, ident: ts.Identifier): IslandBinding 
   const islands = lowerer.nodeIslands;
   if (islands === null) return null;
   const symbol = lowerer.checker.getSymbolAtLocation(ident);
+  // A name a native module re-exports from an island package binds the
+  // island's own export: the import's alias chain reaches it.
+  const reexport = islandReexportOf(lowerer, symbol);
+  if (reexport !== null) return reexport;
   const decl = symbol ? symbol.declarations[0] : undefined;
   if (decl === undefined) return null;
   let importDecl: ts.Node | undefined;
