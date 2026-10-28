@@ -210,6 +210,32 @@ describe.skipIf(skip)("Node island handles", () => {
     );
   }, 300_000);
 
+  test("an island record that contradicts its declaration throws at the crossing", async () => {
+    // A record the island hands back crosses as a deep checked copy:
+    // `unsafe<T>` declares the caller's own record type and hands back a
+    // JSON object whose `fg` is a number, so the copy's conversion throws
+    // before a number reaches a native string field.
+    const root = join(outDir, "unsafe-record-lie");
+    rmSync(root, { recursive: true, force: true });
+    cpSync(join(repoRoot, "tests/corpus/6899-node-island-unsafe-record"), root, {
+      recursive: true,
+    });
+    copyFileSync(
+      join(repoRoot, "tests/fixtures/node-island/unsafe-record-lie.ts"),
+      join(root, "main.ts"),
+    );
+    const result = await compile(join(root, "main.ts"), {
+      outPath: join(root, "main"),
+      outDir: root,
+      sanitize,
+    });
+    if (!result.ok)
+      throw new Error(result.diagnostics.map((d) => `${d.code}: ${d.message}`).join("\n"));
+    expect(await refusal(result.binaryPath)).toContain(
+      "TypeError: expected string at $.fg, got number",
+    );
+  }, 300_000);
+
   test("an island package ships with the program", async () => {
     const root = join(outDir, "ships");
     const src = join(root, "src");

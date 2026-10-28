@@ -739,7 +739,7 @@ function fromIsland(lowerer: Lowerer, raw: IrExpr, node: ts.Expression): IrExpr 
     };
     return lowerer.coerceToExpected(copy, mapped);
   }
-  if (!copiedType(lowerer, mapped) && exportedByReference(lowerer, tsType))
+  if (!copiedType(lowerer, mapped) && copiedRecordType(lowerer, tsType))
     return lowerer.coerceToExpected(raw, mapped);
   if (!copiedType(lowerer, mapped))
     boundaryFail(
@@ -1243,6 +1243,25 @@ function exportedByReference(lowerer: Lowerer, type: ts.Type): boolean {
   const name = type.getSymbol()?.escapedName;
   if (name === "WeakMap" || name === "WeakSet") return false;
   return true;
+}
+
+/** A record type an island object crosses OUT into as a deep checked
+ * copy: the object types exportedByReference names, and intersections of
+ * them — a mapped pair (`{[K in Fg]: V} & {[K in Bg]?: V}`) or a merged
+ * generic record (`Omit<Base, "k"> & Extras`) is one record, so the
+ * island's object converts into the native one the same way a plain
+ * record's does. An intersection with a primitive arm (`string & {brand}`)
+ * is a primitive value, which copies as its arm. */
+function copiedRecordType(lowerer: Lowerer, type: ts.Type): boolean {
+  if ((type.flags & ts.TypeFlags.Intersection) !== 0)
+    return ts
+      .constituentTypes(type)
+      .every(
+        (t) =>
+          (t.flags & (ts.TypeFlags.Null | ts.TypeFlags.Undefined | ts.TypeFlags.Void)) !== 0 ||
+          copiedRecordType(lowerer, t),
+      );
+  return exportedByReference(lowerer, type);
 }
 
 /** A fresh object or array literal crosses as a copy (a plain dyn object
