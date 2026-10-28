@@ -192,7 +192,10 @@ static bool scr_signal_check(ScrStr *name, ScrDyn *cb) {
   return true;
 }
 
-void scr_signal_on(ScrStr *name, ScrDyn *cb, bool once) {
+/* The registration body both entry points share: `prepend` puts the
+ * listener in FRONT of the signal's existing ones (process.prependListener
+ * — Node's EventEmitter order), the plain form appends. */
+static void scr_signal_add(ScrStr *name, ScrDyn *cb, bool once, bool prepend) {
   if (!scr_signal_check(name, cb)) return;
   if (!scr_context_is_main()) return;
 #ifdef __wasi__
@@ -242,9 +245,25 @@ void scr_signal_on(ScrStr *name, ScrDyn *cb, bool once) {
     reg->ls = realloc(reg->ls, reg->cap * sizeof *reg->ls);
     if (!reg->ls) scr_events_oom();
   }
-  reg->ls[reg->n++] = (ScrSigListener){scr_dyn_retain(cb), scr_str_retain(name), once, ++scr_sig_id};
+  ScrSigListener entry =
+      (ScrSigListener){scr_dyn_retain(cb), scr_str_retain(name), once, ++scr_sig_id};
+  if (prepend) {
+    memmove(reg->ls + 1, reg->ls, reg->n * sizeof *reg->ls);
+    reg->ls[0] = entry;
+    reg->n++;
+  } else {
+    reg->ls[reg->n++] = entry;
+  }
 #endif
 }
+
+void scr_signal_on(ScrStr *name, ScrDyn *cb, bool once) {
+  scr_signal_add(name, cb, once, false);
+}
+
+/* process.prependListener(<signal>, cb): the same listener in front of the
+ * signal's existing registrations. */
+void scr_signal_prepend(ScrStr *name, ScrDyn *cb) { scr_signal_add(name, cb, false, true); }
 
 static void scr_sig_reg_drop(ScrSigReg *reg) {
   if (reg->sig > 0) {
@@ -1714,6 +1733,28 @@ void scr_process_off_exit_island(uint32_t island) {
   }
 }
 #endif
+
+/* process.prependListener("exit", cb): the same listener in front of the
+ * registry's existing entries. */
+void scr_process_prepend_exit(ScrClosure *cb /*moves*/, void (*fn)(ScrClosure *, double)) {
+  if (scr_exit_ran) {
+    scr_closure_release(cb);
+    return;
+  }
+  if (scr_exit_n == scr_exit_cap) {
+    scr_exit_cap = scr_exit_cap ? scr_exit_cap * 2 : 2;
+    scr_exit_ls = realloc(scr_exit_ls, scr_exit_cap * sizeof *scr_exit_ls);
+    if (!scr_exit_ls) scr_events_oom();
+  }
+  memmove(scr_exit_ls + 1, scr_exit_ls, scr_exit_n * sizeof *scr_exit_ls);
+  scr_exit_ls[0].cb = cb;
+  scr_exit_ls[0].fn = fn;
+  scr_exit_ls[0].once = false;
+#ifdef SCR_NODE_ISLANDS
+  scr_exit_ls[0].island = 0;
+#endif
+  scr_exit_n++;
+}
 
 void scr_process_off_exit(ScrClosure *cb /*borrowed*/) {
   for (size_t i = 0; i < scr_exit_n; i++) {

@@ -602,6 +602,11 @@ function buildLibFnSignatures() {
      * alive. Invalid callbacks and uncatchable signals throw. */
     "process.onSignal": { argTypes: [STRING, DYN, BOOL], result: VOID },
     "process.offSignal": { argTypes: [STRING, DYN], result: VOID },
+    /** process.prependListener(<signal>, cb): the same listener in front of
+     * the signal's existing registrations (Node appends with `on`, so the
+     * two differ only in dispatch order). Never `once` — that is
+     * prependOnceListener, which has no lowering. */
+    "process.prependSignal": { argTypes: [STRING, DYN], result: VOID },
     /** The process 'exit' event — process.on/once/off("exit"). args: [cb,
      * once bool] / [cb]. Listeners run SYNCHRONOUSLY at termination
      * (normal exit, process.exit(), the uncaught/unhandled exit-1 paths)
@@ -610,6 +615,9 @@ function buildLibFnSignatures() {
      * picks the runtime adapter. Never throw. */
     "process.onExit": { argTypes: [null, BOOL], result: VOID },
     "process.offExit": { argTypes: [null], result: VOID },
+    /** process.prependListener("exit", cb): the same listener in front of
+     * the exit registry's existing entries. */
+    "process.prependExit": { argTypes: [null], result: VOID },
     /** process.stdin listener registration — stdin.on/once("data" | "end" |
      * "error", cb). args: [cb, once bool]. data callbacks: () => void or
      * (chunk: Uint8Array) => void; end: () => void; error: () => void or
@@ -1592,6 +1600,12 @@ function buildLibFnSignatures() {
       result: VOID,
     },
     "net.serverOnConnection": { argTypes: [NETSERVER_T, null, BOOL], result: VOID },
+    /** server.off(event, listener) / removeListener: [server, listener
+     * closure, list kind]. The kind selects the event's registry (1 error,
+     * 2 close, 3 listening, 4 connection/secureConnection, 5 timeout,
+     * 6 drop — the scr_net.h SCR_NET_OFF_* values); Node removes the most
+     * recently added matching listener. Never throws. */
+    "net.serverOff": { argTypes: [NETSERVER_T, null, F64], result: VOID },
     /** 'secureConnection' — the TLS server's deferred 'connection' list
      * (handshake-completion timing); on a server without deferred
      * connections (a plain net server) the registration never fires,
@@ -5091,6 +5105,9 @@ function buildLibFnSignatures() {
      * non-function. */
     /** Uncaught exception handlers and monitors: [callback dyn, once, monitor]. */
     "process.onUncaughtException": { argTypes: [DYN, BOOL, BOOL], result: VOID },
+    /** Uncaught handlers registered in FRONT of the registry's existing
+     * entries: [callback dyn, monitor] (never `once`). */
+    "process.prependUncaughtException": { argTypes: [DYN, BOOL], result: VOID },
     "process.offUncaughtException": { argTypes: [DYN, BOOL], result: VOID },
     "process.onUnhandledRejection": { argTypes: [DYN, BOOL], result: VOID },
     "process.offUnhandledRejection": { argTypes: [DYN], result: VOID },

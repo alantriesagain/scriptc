@@ -679,17 +679,22 @@ export function emitProcessLibCall(host: LlvmEmitterContext, e: LibCallExpr): Ll
     host.emitPendingCheck();
     return { name: "", type: e.type };
   }
-  if (e.fn === "process.onExit") {
+  if (e.fn === "process.onExit" || e.fn === "process.prependExit") {
     // Runtime adapters cover both shapes (the code is a plain double);
     // the registry owns the callback.
     const cbT = e.args[0]!.type;
     if (cbT.kind !== "func")
-      throw new InternalCompilerError("llvm emitter bug: process.onExit callback not a func");
+      throw new InternalCompilerError(`llvm emitter bug: ${e.fn} callback not a func`);
     const cb = host.emitExpr(e.args[0]!);
-    const once = host.emitExpr(e.args[1]!);
     host.toHeap(cb);
     const adapter = cbT.params.length === 0 ? "scr_exit_thunk0" : "scr_exit_thunk_code";
     host.declare(`declare void @${adapter}(ptr, double)`);
+    if (e.fn === "process.prependExit") {
+      host.declare(`declare void @scr_process_prepend_exit(ptr, ptr)`);
+      B.line(`call void @scr_process_prepend_exit(ptr ${cb.name}, ptr @${adapter})`);
+      return { name: "", type: e.type };
+    }
+    const once = host.emitExpr(e.args[1]!);
     host.declare(`declare void @scr_process_on_exit(ptr, ptr, i1 zeroext)`);
     B.line(`call void @scr_process_on_exit(ptr ${cb.name}, ptr @${adapter}, i1 ${once.name})`);
     return { name: "", type: e.type };

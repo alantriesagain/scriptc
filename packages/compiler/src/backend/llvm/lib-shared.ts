@@ -838,6 +838,11 @@ export const LIB_FN_SYMS: Record<string, string> = {
   // identity); registration is special-cased above (ownership moves).
   "process.offSignal": "scr_signal_off",
   "process.offExit": "scr_process_off_exit",
+  // Front-of-list registrations (process.prependListener): the signal and
+  // uncaught-exception registries. prependExit is special-cased below with
+  // the exit adapters, like onExit.
+  "process.prependSignal": "scr_signal_prepend",
+  "process.prependUncaughtException": "scr_process_prepend_uncaught_exception",
   // child_process (scr_child.c): spawnSync/exec forms are synchronous
   // (execSync/execCapture throw — the may-throw check); handle getters
   // are pure reads. Registration forms are special-cased (moves + per-
@@ -1420,6 +1425,7 @@ export const LIB_FN_SYMS: Record<string, string> = {
   "net.serverListening": "scr_net_server_listening",
   "net.sockSetRef": "scr_net_sock_set_ref",
   "net.serverSetRef": "scr_net_server_set_ref",
+  "net.serverOff": "scr_net_server_off",
   "net.sockWrite": "scr_net_sock_write_str",
   "net.sockWriteBytes": "scr_net_sock_write_bytes",
   "net.sockEnd": "scr_net_sock_end",

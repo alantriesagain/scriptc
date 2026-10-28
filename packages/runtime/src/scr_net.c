@@ -2438,6 +2438,30 @@ void scr_net_server_on_close(ScrNetServer *s, ScrClosure *cb /*moves*/, bool onc
   scr_net_ls_add(&s->close_ls, cb, NULL, once);
 }
 
+/* server.off(event, cb) / removeListener: the LAST listener standing for
+ * the same function leaves the event's list — Node's EventEmitter removes
+ * the most recently added match, so the scan runs back to front. */
+void scr_net_server_off(ScrNetServer *s, ScrClosure *cb /*borrowed*/, double kind) {
+  ScrNetLs *l = kind == SCR_NET_OFF_ERROR      ? &s->err_ls
+                : kind == SCR_NET_OFF_CLOSE    ? &s->close_ls
+                : kind == SCR_NET_OFF_LISTENING ? &s->listening_cbs
+                : kind == SCR_NET_OFF_CONNECTION ? &s->conn_ls
+                : kind == SCR_NET_OFF_TIMEOUT  ? &s->timeout_ls
+                : kind == SCR_NET_OFF_DROP     ? &s->drop_ls
+                                               : NULL;
+  if (l == NULL) return;
+  ScrClosure *root = cb->identity ? cb->identity : cb;
+  for (size_t left = l->n; left > 0; left--) {
+    size_t i = left - 1;
+    if (scr_net_listener_root(&l->ls[i]) != root) continue;
+    scr_closure_release(l->ls[i].cb);
+    scr_net_once_release(l->ls[i].shared_once);
+    memmove(&l->ls[i], &l->ls[i + 1], (l->n - i - 1) * sizeof *l->ls);
+    l->n--;
+    return;
+  }
+}
+
 /* server.on('listening', cb): joins the deferred 'listening' list the
  * listen(port, cb) callback rides (the sweep fires it once after a
  * successful bind — Node's next-tick emit). A registration AFTER the

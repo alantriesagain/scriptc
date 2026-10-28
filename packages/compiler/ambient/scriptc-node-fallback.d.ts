@@ -374,6 +374,12 @@ declare var process: {
    * removal see the same value. */
   on(event: "SIGINT" | "SIGTERM", listener: () => void): void;
   on(event: "exit", listener: (code: number) => void): void;
+  /* prependListener — the same registration at the FRONT of the event's
+   * listener list (Node's EventEmitter order), for the registries that
+   * own a prepend entry ('exit' and the signal family). prependOnceListener
+   * has no lowering. */
+  prependListener(event: "SIGINT" | "SIGTERM", listener: () => void): void;
+  prependListener(event: "exit", listener: (code: number) => void): void;
   /* 'warning' — Node's process-warning channel: listeners receive the
    * warning Error (as a dyn value); emitWarning and the runtime's
    * deprecation sites dispatch synchronously (SEMANTICS.md). */
