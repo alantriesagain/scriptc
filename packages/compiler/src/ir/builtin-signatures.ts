@@ -4901,6 +4901,11 @@ function buildLibFnSignatures() {
      * packed NEW pending; end: (enc, pending) → the buffered partial's
      * flush (+1). Node-exact per encoding (oracle-pinned); none throws. */
     "strdec.write": { argTypes: [STRING, F64, BYTES_U8], result: STRING },
+    /** The checked-dynamic chunk forms (a stream "data" payload): a string
+     * passes through unchanged without touching the buffered state, an
+     * ArrayBufferView decodes, anything else throws ERR_INVALID_ARG_TYPE. */
+    "strdec.writeDyn": { argTypes: [STRING, F64, DYN], result: STRING },
+    "strdec.nextDyn": { argTypes: [STRING, F64, DYN], result: F64 },
     "strdec.next": { argTypes: [STRING, F64, BYTES_U8], result: F64 },
     "strdec.end": { argTypes: [STRING, F64], result: STRING },
     /** A runtime encoding argument's canonical name (Node's normalizeEncoding:

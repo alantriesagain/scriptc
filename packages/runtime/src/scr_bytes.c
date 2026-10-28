@@ -1509,6 +1509,45 @@ double scr_strdec_next(const ScrStr *enc, double pending, const ScrBytes *chunk)
   return hold;
 }
 
+/* The bytes view of a checked-dynamic write chunk, or NULL for a string
+ * chunk (Node's write returns it unchanged, never touching the decoder).
+ * Anything that is not a string or an ArrayBufferView throws Node's
+ * ERR_INVALID_ARG_TYPE for "buf". */
+static ScrBytes *scr_strdec_dyn_view(const ScrDyn *chunk, bool *is_string) {
+  *is_string = chunk->kind == SCR_DYN_STR;
+  if (*is_string) return NULL;
+  if (
+      chunk->kind == SCR_DYN_TYPED_REF || chunk->kind == SCR_DYN_BYTES ||
+      scr_buffer_storage_is(chunk)) {
+    return scr_bytes_buffer_source(chunk);
+  }
+  scr_dyn_arg_type_fail("buf", "an instance of Buffer, TypedArray, or DataView", chunk);
+  return NULL;
+}
+
+/* decoder.write(chunk) where the chunk crossed the checked-dynamic
+ * boundary (`stream.on("data", (data) => decoder.write(data))`). */
+ScrStr *scr_strdec_write_dyn(const ScrStr *enc, double pending, const ScrDyn *chunk) {
+  bool is_string = false;
+  ScrBytes *view = scr_strdec_dyn_view(chunk, &is_string);
+  if (is_string) return scr_str_retain(chunk->v.str);
+  if (!view) return NULL;
+  ScrStr *out = scr_strdec_write(enc, pending, view);
+  scr_bytes_release(view);
+  return out;
+}
+
+/* The decoder state after that write: a string chunk leaves it alone. */
+double scr_strdec_next_dyn(const ScrStr *enc, double pending, const ScrDyn *chunk) {
+  bool is_string = false;
+  ScrBytes *view = scr_strdec_dyn_view(chunk, &is_string);
+  if (is_string) return pending;
+  if (!view) return 0;
+  double hold = scr_strdec_next(enc, pending, view);
+  scr_bytes_release(view);
+  return hold;
+}
+
 /* decoder.end(): the buffered partial flushes — utf8's truncated sequence
  * becomes its replacement chars (the maximal-subpart rule), base64's
  * remainder encodes (padded; unpadded for base64url), utf16le's held

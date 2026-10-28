@@ -593,6 +593,8 @@ export const LIB_FN_SYMS: Record<string, string> = {
   // string_decoder (scr_bytes.c): stateless helpers over (enc, pending,
   // chunk) — never throw.
   "strdec.write": "scr_strdec_write",
+  "strdec.writeDyn": "scr_strdec_write_dyn",
+  "strdec.nextDyn": "scr_strdec_next_dyn",
   "strdec.next": "scr_strdec_next",
   "strdec.end": "scr_strdec_end",
   "strdec.encoding": "scr_strdec_encoding",
