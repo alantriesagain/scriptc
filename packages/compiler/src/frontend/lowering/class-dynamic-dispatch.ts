@@ -7268,7 +7268,9 @@ export class ClassDynamicDispatch {
           }
           body.push({
             kind: "return",
-            value: method ? { kind: "dynFrom", value: method, type: DYN, loc } : dynUndefinedExpr(loc),
+            value: method
+              ? { kind: "dynFrom", value: method, type: DYN, loc }
+              : dynUndefinedExpr(loc),
             loc,
           });
           return body;
