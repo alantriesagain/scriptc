@@ -328,7 +328,15 @@ function appendEntryModules(
  * (tests, coverage on broken files) may arrive with an empty order — fall
  * back to the entry alone. */
 export function splitFiles(lowerer: Lowerer): FileParts[] {
-  const files = lowerer.moduleOrder.length > 0 ? lowerer.moduleOrder : [lowerer.entry];
+  // A declaration file is never a runtime module: it carries no
+  // implementation, so it has no %init to lower and its imports never load
+  // anything. Preflight keeps declarations out of the module order (a
+  // specifier that resolves only to declarations is refused at its own
+  // statement); this filter is the invariant that keeps a stray declaration
+  // from being lowered as code.
+  const files = (lowerer.moduleOrder.length > 0 ? lowerer.moduleOrder : [lowerer.entry]).filter(
+    (sf) => !sf.isDeclarationFile,
+  );
   return files.map((sf) => {
     const fp: FileParts = { sf, fnDecls: [], classDecls: [], topStmts: [] };
     const rebindable = collectRebindableFunctions(lowerer, sf);
