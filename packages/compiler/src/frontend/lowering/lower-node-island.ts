@@ -643,7 +643,7 @@ function fromIsland(lowerer: Lowerer, raw: IrExpr, node: ts.Expression): IrExpr 
   if (!copiedType(lowerer, mapped) && containerType(lowerer, tsType) && handleUseOk(lowerer, node))
     return raw;
   // Otherwise an array of copied values is a copy (above).
-  if (copiedArrayType(lowerer, mapped)) {
+  if (copyableArrayType(lowerer, mapped)) {
     const copy: IrExpr = {
       kind: "libCall",
       fn: "nodeIsland.copyArrays",
@@ -668,6 +668,31 @@ function fromIsland(lowerer: Lowerer, raw: IrExpr, node: ts.Expression): IrExpr 
 function copiedArrayType(lowerer: Lowerer, t: IrType): boolean {
   if (t.kind !== "array") return false;
   return copiedType(lowerer, t.elem) || copiedArrayType(lowerer, t.elem);
+}
+
+/** An array of copied values, or a union of one with null and/or
+ * undefined (`string[] | undefined`): the copy converts whatever the
+ * island value holds (a non-array crosses as itself, so a nullish value
+ * stays nullish) and the checked conversion throws on an element of the
+ * wrong type. */
+function copyableArrayType(lowerer: Lowerer, t: IrType): boolean {
+  if (t.kind !== "union") return copiedArrayType(lowerer, t);
+  const def = lowerer.unions.get(t.unionId);
+  if (def === undefined) return false;
+  let arrays = 0;
+  for (const arm of def.arms) {
+    if (arm.kind === "nullT" || arm.kind === "undefinedT") continue;
+    if (!copiedArrayType(lowerer, arm)) return false;
+    arrays++;
+  }
+  return arrays > 0;
+}
+
+/** The IR type an island value crosses as when it is a copyable array
+ * (`copyableArrayType`), or null when the declared type is not one. */
+function copyableCrossing(lowerer: Lowerer, node: ts.Expression): IrType | null {
+  const mapped = lowerer.mapTypeOf(lowerer.typeOf(node));
+  return mapped !== null && copyableArrayType(lowerer, mapped) ? mapped : null;
 }
 
 /** Whether a value of IR type `t` is copied at the boundary: primitives,
@@ -1355,17 +1380,30 @@ export function lowerIslandExpr(lowerer: Lowerer, expr: ts.Expression): IrExpr |
     const b = islandBindingOf(lowerer, expr);
     if (b === null) {
       if (!islandHandleBinding(lowerer, expr)) return null;
-      if (!handleUseOk(lowerer, expr))
+      // The DECLARED type decides the crossing, not the use: an island
+      // handle whose type is an array of copied values crosses as a copy of
+      // its elements wherever native code needs a native value, and the
+      // checked conversion throws on an element of the wrong type. Every
+      // other native use stays refused (the value is a handle).
+      const ok = handleUseOk(lowerer, expr);
+      const copy = ok ? null : copyableCrossing(lowerer, expr);
+      if (!ok && copy === null)
         boundaryFail(
           lowerer,
           `an island value of type '${lowerer.checker.typeToString(lowerer.typeOf(expr))}' used as a native value (island arrays, Maps and Sets stay handles: read members, call methods, index or spread them)`,
           expr,
         );
       lowerer.usesNodeIsland = true;
-      const g = lowerer.globalOf(expr);
-      if (g === null) return null; // the local is declared dyn
-      g.type = DYN;
-      return varRef(g.id, DYN, loc);
+      const slot = lowerer.globalOf(expr) ?? lowerer.peekLocal(expr);
+      if (slot === null) return null; // the local is declared dyn
+      slot.type = DYN;
+      const ref = varRef(slot.id, DYN, loc);
+      return copy === null
+        ? ref
+        : lowerer.coerceToExpected(
+            { kind: "libCall", fn: "nodeIsland.copyArrays", args: [ref], type: DYN, loc },
+            copy,
+          );
     }
     lowerer.usesNodeIsland = true;
     return fromIsland(lowerer, islandBindingValue(lowerer, b, expr, loc), expr);
