@@ -236,6 +236,21 @@ export function lowerIdentifierExpr(lowerer: Lowerer, expr: ts.Identifier, loc: 
     if (active || captured) {
       const use = runtimeOptionalUseOf(expr);
       if (use?.complex) {
+        // A DECLARED absent arm is honest storage: when the checker itself
+        // types this use with a unit arm (an optional property read, an
+        // optional parameter, a `T | undefined` local), the read needs no
+        // narrowing aid — the union value flows into the surrounding
+        // logical/conditional operator, which handles the absent arm
+        // itself (`(entries ?? []).map(...)`, `x?.y ?? z`). Only a hidden
+        // absence the checker does not admit needs the refusal below.
+        const checked = lowerer.mapTypeOf(lowerer.typeOf(expr));
+        if (
+          checked?.kind === "union" &&
+          local.type.kind === "union" &&
+          lowerer.armTag(checked.unionId, UNDEFINED_T) >= 0 &&
+          lowerer.armTag(local.type.unionId, UNDEFINED_T) >= 0
+        )
+          return { kind: "varRef", localId: local.id, type: local.type, loc };
         lowerer.unsupported(
           "SC1090",
           expr,
