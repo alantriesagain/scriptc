@@ -1,0 +1,51 @@
+native-shim-monkeypatching.ts:12:3 - error SC1090: assignment to non-variables are not supported yet
+
+  11 | export function guardStdout(): void {
+  12 |   process.stdout.write = (chunk: string | Uint8Array): boolean => {
+     |   ^~~~~~~~~~~~~~~~~~~~
+  13 |     process.stderr.write(chunk);
+
+native-shim-monkeypatching.ts:18:17 - error SC2007: values of type '{ (data: string | Uint8Array<ArrayBufferLike>, callback?: ((error?: Error | null | undefined) => void) | undefined): boolean; (data: string | Uint8Array<...>, encoding: BufferEncoding, callback?: ((error?: Error | ... 1 more ... | undefined) => void) | undefined): boolean; }' cannot be compiled: the type declares multiple call signatures (overloads), and a compiled function value is always one concrete signature
+
+  17 | 
+  18 | export function bindStdoutWrite(): typeof process.stdout.write {
+     |                 ^~~~~~~~~~~~~~~
+  19 |   return process.stdout.write.bind(process.stdout);
+
+  hint: annotate the slot with the ONE signature the program actually calls (e.g. '(x: number) => string'), or wrap the overloaded function in a single-signature arrow
+
+native-shim-monkeypatching.ts:22:17 - error SC2007: values of type '{ (path: string | number | URL, encoding: BufferEncoding): string; (path: string | number | URL, options: { encoding: BufferEncoding; }): string; (path: string | ... 1 more ... | URL): Buffer<...>; (path: string | URL, options: unknown): string | Buffer<...>; }' cannot be compiled: the type declares multiple call signatures (overloads), and a compiled function value is always one concrete signature
+
+  21 | 
+  22 | export function bindReadFileSync(): typeof fs.readFileSync {
+     |                 ^~~~~~~~~~~~~~~~
+  23 |   return fs.readFileSync.bind(fs);
+
+  hint: annotate the slot with the ONE signature the program actually calls (e.g. '(x: number) => string'), or wrap the overloaded function in a single-signature arrow
+
+native-shim-monkeypatching.ts:27:3 - error SC2020: 'Object.defineProperty' is part of the standard library types but has no scriptc lowering yet
+
+  26 | export function defineReadFileSync(): void {
+  27 |   Object.defineProperty(fs, "readFileSync", { value: () => "" });
+     |   ^~~~~~~~~~~~~~~~~~~~~
+  28 | }
+
+  hint: the type checker sees the full standard library, but only the supported surface compiles (https://scriptc.dev/limitations)
+
+native-shim-monkeypatching.ts:31:1 - error SC2004: uses of 'bindStdoutWrite' inherit the blocker on its declaration
+
+  30 | guardStdout();
+  31 | bindStdoutWrite();
+     | ^~~~~~~~~~~~~~~
+  32 | bindReadFileSync();
+
+  hint: the declaration of 'bindStdoutWrite' did not compile — fix the diagnostic reported there and these sites clear with it
+
+native-shim-monkeypatching.ts:32:1 - error SC2004: uses of 'bindReadFileSync' inherit the blocker on its declaration
+
+  31 | bindStdoutWrite();
+  32 | bindReadFileSync();
+     | ^~~~~~~~~~~~~~~~
+  33 | defineReadFileSync();
+
+  hint: the declaration of 'bindReadFileSync' did not compile — fix the diagnostic reported there and these sites clear with it
