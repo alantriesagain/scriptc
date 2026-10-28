@@ -8,7 +8,7 @@ order of the table below, so its log is the release's log plus one commit per ch
 compiler light's native build runs (`SCRIPTC=...`, see light's `native/README.md`). `refork.sh`
 rebuilds all of it on a new release.
 
-Current base: **v0.4.2** (`4d049fbb8`). Bare v0.4.2 still has the problems all seven fix. The v0.3.6 fork stays as `light-integration-v0.3.6` and its patch branches as `<branch>-v0.3.6`.
+Current base: **v0.4.5** (`4ee477d11`). Bare v0.4.2 still has the problems all seven fix. The v0.3.6 fork stays as `light-integration-v0.3.6` and its patch branches as `<branch>-v0.3.6`.
 
 ## The patches
 
