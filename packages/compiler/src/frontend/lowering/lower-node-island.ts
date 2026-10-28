@@ -1226,10 +1226,22 @@ export function classConstructHelper(
 /** Native values NI-5 exports into the island by reference: functions,
  * promises, and object types other than arrays, tuples, Maps and Sets
  * (records, interfaces, class instances). A union qualifies when every
- * arm does or is copied. */
+ * arm does or is copied, and an intersection of them qualifies: a merged
+ * generic record (`Omit<Base, "k"> & Extras`, the `Type.Object(props)`
+ * shape) is one native object, and the island reads the program's own
+ * object, not a copy of it. An intersection with a primitive arm
+ * (`string & {brand}`) is a primitive value, which the runtime copies. */
 function exportedByReference(lowerer: Lowerer, type: ts.Type): boolean {
   const checker = lowerer.checker;
   if (type.isUnionType())
+    return ts
+      .constituentTypes(type)
+      .every(
+        (t) =>
+          (t.flags & (ts.TypeFlags.Null | ts.TypeFlags.Undefined | ts.TypeFlags.Void)) !== 0 ||
+          exportedByReference(lowerer, t),
+      );
+  if ((type.flags & ts.TypeFlags.Intersection) !== 0)
     return ts
       .constituentTypes(type)
       .every(
