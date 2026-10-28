@@ -62,6 +62,40 @@ export function lowerReflectCall(
   }
   if (call.questionDotToken) return null;
   const reflectMember = lowerer.stdlibGlobalMember(access, "Reflect");
+  // Reflect.has(target, key) — the `in` operator's presence query over
+  // the target's checked-dynamic view (own and inherited names, proxy
+  // `has` traps included). A primitive target is Node's TypeError
+  // ("Reflect.has called on non-object"), which the presence query
+  // answers false for instead: fenced, never silently divergent.
+  if (
+    reflectMember === "has" &&
+    call.arguments.nodes.length === 2 &&
+    !call.arguments.nodes.some(ts.isSpreadElement)
+  ) {
+    const loc = locOf(call);
+    const target = lowerer.lowerExpr(call.arguments.nodes[0]!);
+    const primitive =
+      isUnitType(target.type) ||
+      ["bool", "f64", "string", "bigint", "symbol"].includes(target.type.kind);
+    if (primitive)
+      lowerer.noLowering(
+        "Reflect.has on a primitive target",
+        call.arguments.nodes[0]!,
+        "Node throws a TypeError for a primitive target; narrow to an object first",
+      );
+    if (!lowerer.dynConvertible(target.type))
+      lowerer.noLowering("Reflect.has on this target", call.arguments.nodes[0]!);
+    return {
+      kind: "libCall",
+      fn: "dyn.hasKeyComputed",
+      args: [
+        lowerer.coerceToExpected(target, DYN),
+        lowerer.lowerExprExpecting(call.arguments.nodes[1]!, DYN),
+      ],
+      type: BOOL,
+      loc,
+    };
+  }
   // Reflect.getOwnPropertyDescriptor and Reflect.defineProperty over
   // checked objects (execa's Promise mixin): the Object operations, with
   // defineProperty answering true. A non-object target throws the Object

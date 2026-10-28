@@ -7885,6 +7885,10 @@ function lowerObjectStaticCall(
       isUnitType(object.type)
     )
       object = { kind: "dynFrom", value: object, type: DYN, loc: locOf(call) };
+    // A record, array or class instance reflects through its own
+    // checked-dynamic view (own fields and elements, in property order).
+    if (object.type.kind !== "dyn" && lowerer.dynConvertible(object.type))
+      object = lowerer.coerceToExpected(object, DYN);
     if (object.type.kind === "dyn")
       return {
         kind: "libCall",
