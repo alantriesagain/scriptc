@@ -3234,6 +3234,11 @@ ScrPromise *scr_fsp_write_file_mode(ScrStr *path, ScrStr *data, double mode) {
   return scr_promise_settled_void();
 }
 
+ScrPromise *scr_fsp_write_file_flags(ScrStr *path, ScrStr *data, double mode, double exclusive) {
+  scr_fs_write_file_flags(path, data, mode, exclusive);
+  return scr_promise_settled_void();
+}
+
 ScrPromise *scr_fsp_mkdir(ScrStr *path) {
   scr_fs_mkdir(path);
   return scr_promise_settled_void();
@@ -3291,6 +3296,11 @@ ScrPromise *scr_fsp_append_file_bytes(ScrStr *path, ScrBytes *data) {
 
 ScrPromise *scr_fsp_copyfile(ScrStr *src, ScrStr *dest) {
   scr_fs_copyfile(src, dest);
+  return scr_promise_settled_void();
+}
+
+ScrPromise *scr_fsp_copyfile_flags(ScrStr *src, ScrStr *dest, double mode) {
+  scr_fs_copyfile_flags(src, dest, mode);
   return scr_promise_settled_void();
 }
 

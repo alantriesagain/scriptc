@@ -346,6 +346,9 @@ bool scr_fs_access_mode_valid(double mode);
 bool scr_fs_truncate_len_valid(double length);
 void scr_fs_truncate(ScrStr *path, double length);
 void scr_fs_copyfile(ScrStr *src, ScrStr *dest);
+/* copyFileSync(src, dest, mode): libuv's copyfile flag bits (EXCL 1,
+ * FICLONE 2, FICLONE_FORCE 4); out-of-range modes throw Node's RangeError. */
+void scr_fs_copyfile_flags(ScrStr *src, ScrStr *dest, double mode);
 /* The two-path form of scr_fs_throw: "ENOENT: no such file or directory,
  * copyfile 'src' -> 'dest'", with path and dest own properties. */
 void scr_fs_throw2(int e, const char *op, const ScrStr *src, const ScrStr *dest);
@@ -367,6 +370,8 @@ void scr_fs_rename(ScrStr *oldpath, ScrStr *newpath);
 int scr_fs_rename_raw(const ScrStr *oldpath, const ScrStr *newpath);
 void scr_fs_rename_error(int error, const ScrStr *oldpath, const ScrStr *newpath);
 void scr_fs_write_file_mode(ScrStr *path, ScrStr *data, double mode);
+/* writeFileSync(path, data, { mode, flag }): `exclusive` is "wx" (O_EXCL). */
+void scr_fs_write_file_flags(ScrStr *path, ScrStr *data, double mode, double exclusive);
 void scr_fs_mkdir_mode(ScrStr *path, double mode);
 void scr_fs_mkdir_recursive_mode(ScrStr *path, double mode);
 /* The same walk, answering the first directory created (+1) or NULL
@@ -493,6 +498,7 @@ ScrDyn *scr_stats_dyn(ScrStats *s, bool bigint);
 ScrPromise *scr_fsp_read_file(ScrStr *path);
 ScrPromise *scr_fsp_write_file(ScrStr *path, ScrStr *data);
 ScrPromise *scr_fsp_write_file_mode(ScrStr *path, ScrStr *data, double mode);
+ScrPromise *scr_fsp_write_file_flags(ScrStr *path, ScrStr *data, double mode, double exclusive);
 ScrPromise *scr_fsp_mkdir(ScrStr *path);
 ScrPromise *scr_fsp_mkdir_mode(ScrStr *path, double mode);
 ScrPromise *scr_fsp_mkdir_recursive(ScrStr *path);
@@ -505,6 +511,7 @@ ScrPromise *scr_fsp_access(ScrStr *path, double mode);
 ScrPromise *scr_fsp_append_file(ScrStr *path, ScrStr *data);
 ScrPromise *scr_fsp_append_file_bytes(ScrStr *path, ScrBytes *data);
 ScrPromise *scr_fsp_copyfile(ScrStr *src, ScrStr *dest);
+ScrPromise *scr_fsp_copyfile_flags(ScrStr *src, ScrStr *dest, double mode);
 ScrPromise *scr_fsp_mkdtemp(ScrStr *prefix);
 ScrPromise *scr_fsp_read_file_encoded(ScrStr *path, ScrStr *encoding);
 ScrPromise *scr_fsp_rmdir(ScrStr *path);

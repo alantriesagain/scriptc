@@ -1418,6 +1418,12 @@ function buildLibFnSignatures() {
      * clamped like ftruncateSync's) and closes it. */
     "fs.truncateSync": { argTypes: [STRING, F64], result: VOID },
     "fs.copyFileSync": { argTypes: [STRING, STRING], result: VOID },
+    /** copyFileSync(src, dest, mode): libuv's uv_fs_copyfile flag bits —
+     * COPYFILE_EXCL (1) fails on an existing destination, COPYFILE_FICLONE
+     * (2) requests a reflink and falls back to a copy, COPYFILE_FICLONE_FORCE
+     * (4) requires one. Out-of-range modes throw the RangeError Node throws
+     * ("mode is out of range: >= 0 && <= 7"). */
+    "fs.copyFileFlagsSync": { argTypes: [STRING, STRING, F64], result: VOID },
     /** renameSync is the direct two-path syscall wrapper. renameCb defers
      * the operation to the loop and fires a program-shaped Error | null
      * callback through a backend-emitted adapter. */
@@ -1425,6 +1431,10 @@ function buildLibFnSignatures() {
     // Callback type is program-dependent (zero params or Error | null).
     "fs.renameCb": { argTypes: [STRING, STRING, null], result: VOID },
     "fs.writeFileModeSync": { argTypes: [STRING, STRING, F64], result: VOID },
+    /** writeFileSync(path, data, { mode, flag }): the same open(2) write
+     * with the disposition flag — flag 1 is "wx" (O_EXCL: EEXIST when the
+     * path exists), 0 is "w" (the default truncate-or-create). */
+    "fs.writeFileFlagsSync": { argTypes: [STRING, STRING, F64, F64], result: VOID },
     "fs.mkdirModeSync": { argTypes: [STRING, F64], result: VOID },
     "fs.mkdirRecursiveModeSync": { argTypes: [STRING, F64], result: VOID },
     "atomics.wait": { argTypes: [bytesOf("i32"), F64, F64, F64], result: STRING },
@@ -3451,6 +3461,17 @@ function buildLibFnSignatures() {
     /** fs.promises.writeFile(path, data, { mode }): the settled-promise
      * twin of fs.writeFileModeSync. */
     "fsp.writeFileMode": {
+      argTypes: [STRING, STRING, F64],
+      result: { kind: "promise", inner: VOID },
+    },
+    /** fs.promises.writeFile(path, data, { mode, flag }) and
+     * fs.promises.copyFile(src, dest, mode): the settled-promise twins of
+     * fs.writeFileFlagsSync and fs.copyFileFlagsSync. */
+    "fsp.writeFileFlags": {
+      argTypes: [STRING, STRING, F64, F64],
+      result: { kind: "promise", inner: VOID },
+    },
+    "fsp.copyFileFlags": {
       argTypes: [STRING, STRING, F64],
       result: { kind: "promise", inner: VOID },
     },
