@@ -681,12 +681,19 @@ function fromIsland(lowerer: Lowerer, raw: IrExpr, node: ts.Expression): IrExpr 
   if ((tsType.flags & (ts.TypeFlags.Void | ts.TypeFlags.Undefined)) !== 0 && isDiscarded(node))
     return raw;
   const mapped = lowerer.mapTypeOf(tsType);
-  if (mapped === null)
+  if (mapped === null) {
+    // An intersection of containers (`Choice[] & GenChoice[]`: the
+    // island's array extended by the caller's own type) has no native
+    // representation of its own. Where the program only uses it through
+    // island operations it stays a handle, like an array the island does
+    // not declare.
+    if (containerType(lowerer, tsType) && handleUseOk(lowerer, node)) return raw;
     boundaryFail(
       lowerer,
       `an island value of type '${lowerer.checker.typeToString(tsType)}'`,
       node,
     );
+  }
   if (mapped.kind === "dyn") return raw;
   if (mapped.kind === "void") return raw;
   // An island promise is the same promise on both sides (the runtime keeps
@@ -887,9 +894,18 @@ function builtinHandleClass(type: ts.Type): boolean {
 
 /** Arrays, tuples, Maps and Sets (every arm of a union, nullish arms
  * aside), and the builtin classes of builtinHandleClass: the object types
- * an island hands back without declaring them. */
+ * an island hands back without declaring them. An intersection of those
+ * (`Choice[] & GenChoice[]`) is a container too: it is a value of each. */
 function containerType(lowerer: Lowerer, type: ts.Type): boolean {
   if (type.isUnionType())
+    return ts
+      .constituentTypes(type)
+      .every(
+        (t) =>
+          (t.flags & (ts.TypeFlags.Null | ts.TypeFlags.Undefined | ts.TypeFlags.Void)) !== 0 ||
+          containerType(lowerer, t),
+      );
+  if ((type.flags & ts.TypeFlags.Intersection) !== 0)
     return ts
       .constituentTypes(type)
       .every(
