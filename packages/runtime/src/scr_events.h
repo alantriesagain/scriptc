@@ -39,6 +39,7 @@ void scr_signal_prepend(ScrStr *name, ScrDyn *cb);
 void scr_signal_off(ScrStr *name, ScrDyn *cb);
 void scr_process_on_exit(ScrClosure *cb, void (*fn)(ScrClosure *, double), bool once);
 void scr_process_prepend_exit(ScrClosure *cb, void (*fn)(ScrClosure *, double));
+double scr_process_stdin_is_raw(void);
 void scr_process_off_exit(ScrClosure *cb);
 void scr_run_exit_listeners(double code);
 void scr_exit_thunk0(ScrClosure *cb, double code);

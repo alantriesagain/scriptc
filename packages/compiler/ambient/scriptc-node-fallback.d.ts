@@ -340,6 +340,12 @@ declare var process: {
    * (chunks stay bytes; decode with TextDecoder). */
   stdin: {
     readonly isTTY: boolean;
+    /* The descriptor the stream is built over (Node reports 0 here and
+     * 1/2 on stdout/stderr, whatever the underlying file is). */
+    readonly fd: 0;
+    /* True while a TTY stdin runs in raw mode; Node's own property is
+     * undefined on a non-TTY stdin (the `x || false` idiom). */
+    readonly isRaw: boolean;
     on(event: "data", listener: (chunk: Uint8Array) => void): void;
     on(event: "end", listener: () => void): void;
     on(event: "error", listener: (err: Error) => void): void;
@@ -1753,6 +1759,8 @@ declare module "tty" {
     /* The bytes queued behind the last write: the compiled binary's fd
      * 1/2 writes are synchronous, so it is always 0. */
     readonly writableLength: number;
+    /* The descriptor behind the stream (1 for stdout, 2 for stderr). */
+    readonly fd: number;
     getWindowSize(): [number, number];
   }
   export function isatty(fd: number): boolean;

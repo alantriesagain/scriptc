@@ -1,7 +1,7 @@
 /* Focused LLVM library-call emission extracted from emitter.ts. */
 import { InternalCompilerError } from "../../errors.js";
 import { undefinedArmTag } from "../../ir/analysis.js";
-import { F64, type IrType, RUNTIME_ERROR_CLASSES, STRING, typeKey } from "../../ir/ir.js";
+import { BOOL, F64, type IrType, RUNTIME_ERROR_CLASSES, STRING, typeKey } from "../../ir/ir.js";
 import type { LlvmEmitterContext, LibCallExpr, LlValue } from "./expr-context.js";
 import { f64Lit } from "./common.js";
 import { mockTimerSym } from "./lib-shared.js";
@@ -699,17 +699,26 @@ export function emitProcessLibCall(host: LlvmEmitterContext, e: LibCallExpr): Ll
     B.line(`call void @scr_process_on_exit(ptr ${cb.name}, ptr @${adapter}, i1 ${once.name})`);
     return { name: "", type: e.type };
   }
-  if (e.fn === "process.envGet" || e.fn === "process.columns" || e.fn === "process.rows") {
-    // getenv(3) / ioctl(TIOCGWINSZ): the runtime answers a +1 string or
-    // NULL (a width or a negative sentinel); the union construction is
-    // type-directed HERE — present wraps the value arm, absent yields
+  if (
+    e.fn === "process.envGet" ||
+    e.fn === "process.columns" ||
+    e.fn === "process.rows" ||
+    e.fn === "process.stdinIsRaw"
+  ) {
+    // getenv(3) / ioctl(TIOCGWINSZ) / termios: the runtime answers a +1
+    // string or NULL, or a number with a negative sentinel (the raw-mode
+    // flag rides the same double channel, 1/0/-1); the union construction
+    // is type-directed HERE — present wraps the value arm, absent yields
     // the interned immortal undefined-arm instance.
     if (e.type.kind !== "union")
       throw new InternalCompilerError(`llvm emitter bug: ${e.fn} result is not a union`);
     const def = host.unionsById.get(e.type.unionId);
     const undefTag = undefinedArmTag(e.type, host.unionsById);
     const isEnv = e.fn === "process.envGet";
-    const valTag = def ? def.arms.findIndex((a) => a.kind === (isEnv ? "string" : "f64")) : -1;
+    const isRaw = e.fn === "process.stdinIsRaw";
+    const valTag = def
+      ? def.arms.findIndex((a) => a.kind === (isEnv ? "string" : isRaw ? "bool" : "f64"))
+      : -1;
     if (valTag < 0 || undefTag < 0)
       throw new InternalCompilerError(`llvm emitter bug: ${e.fn} union lacks its arms`);
     const args = e.args.map((a) => host.emitExpr(a));
@@ -724,6 +733,10 @@ export function emitProcessLibCall(host: LlvmEmitterContext, e: LibCallExpr): Ll
       host.declare(`declare ptr @scr_env_get(ptr)`);
       B.line(`${raw} = call ptr @scr_env_get(ptr ${args[0]!.name})`);
       B.line(`${present} = icmp ne ptr ${raw}, null`);
+    } else if (isRaw) {
+      host.declare(`declare double @scr_process_stdin_is_raw()`);
+      B.line(`${raw} = call double @scr_process_stdin_is_raw()`);
+      B.line(`${present} = fcmp oge double ${raw}, ${f64Lit(0)}`);
     } else {
       const runtimeFn = e.fn === "process.rows" ? "scr_process_rows" : "scr_process_columns";
       host.declare(`declare double @${runtimeFn}(double)`);
@@ -732,9 +745,18 @@ export function emitProcessLibCall(host: LlvmEmitterContext, e: LibCallExpr): Ll
     }
     B.condBr(present, lp, la);
     B.startBlock(lp);
-    B.line(
-      `store ptr ${host.unionNewOwned(e.type.unionId, valTag, { name: raw, type: isEnv ? STRING : F64 })}, ptr ${slot}`,
-    );
+    if (isRaw) {
+      // The raw flag: 1/0 becomes the bool arm's i1.
+      const flag = B.tmp();
+      B.line(`${flag} = fcmp one double ${raw}, ${f64Lit(0)}`);
+      B.line(
+        `store ptr ${host.unionNewOwned(e.type.unionId, valTag, { name: flag, type: BOOL })}, ptr ${slot}`,
+      );
+    } else {
+      B.line(
+        `store ptr ${host.unionNewOwned(e.type.unionId, valTag, { name: raw, type: isEnv ? STRING : F64 })}, ptr ${slot}`,
+      );
+    }
     B.br(lj);
     B.startBlock(la);
     B.line(`store ptr ${host.unitInstanceRef(e.type.unionId, undefTag)}, ptr ${slot}`);

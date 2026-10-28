@@ -247,12 +247,13 @@ export function lowerProcStreamMethodCall(
 }
 
 /** Standard streams expose optional terminal properties: pipes have no
- * isTTY, columns, or rows. The declarations do not prove their presence. */
+ * isTTY, columns, or rows, and only a TTY stdin has a raw-mode flag. The
+ * declarations do not prove their presence. */
 export function isOptionalProcessStreamProperty(
   lowerer: Lowerer,
   expr: ts.PropertyAccessExpression,
 ): boolean {
-  if (!["isTTY", "columns", "rows"].includes(expr.name.text)) return false;
+  if (!["isTTY", "columns", "rows", "isRaw"].includes(expr.name.text)) return false;
   let recv = expr.expression;
   while (ts.isParenthesizedExpression(recv) || ts.isAsExpression(recv) || ts.isTypeAssertion(recv))
     recv = recv.expression;
@@ -261,7 +262,7 @@ export function isOptionalProcessStreamProperty(
     if (
       stream === "stdout" ||
       stream === "stderr" ||
-      (stream === "stdin" && expr.name.text === "isTTY")
+      (stream === "stdin" && (expr.name.text === "isTTY" || expr.name.text === "isRaw"))
     )
       return true;
   }
@@ -357,7 +358,9 @@ export function lowerProcessStreamProperty(
     member !== "isTTY" &&
     member !== "columns" &&
     member !== "rows" &&
-    member !== "writableLength"
+    member !== "writableLength" &&
+    member !== "fd" &&
+    member !== "isRaw"
   )
     return null;
   let recv: ts.Expression = expr.expression;
@@ -449,7 +452,29 @@ export function lowerProcessStreamProperty(
       loc,
     };
   }
-  if (stream === "stdin") return null;
+  if (member === "fd") {
+    // The process streams are built over fd 0/1/2 (Node answers those on
+    // a TTY, a pipe, and a redirected file alike).
+    return {
+      kind: "numLit",
+      value: stream === "stdin" ? 0 : stream === "stdout" ? 1 : 2,
+      type: F64,
+      loc,
+    };
+  }
+  if (stream === "stdin") {
+    if (member !== "isRaw") return null;
+    // Node answers the raw-mode flag of a TTY stdin and undefined on
+    // anything else (a pipe-backed stdin); the runtime sentinel carries
+    // both (scr_process_stdin_is_raw).
+    return {
+      kind: "libCall",
+      fn: "process.stdinIsRaw",
+      args: [],
+      type: lowerer.withUndefinedArm(BOOL),
+      loc,
+    };
+  }
   const want = lowerer.withUndefinedArm(F64);
   return {
     kind: "libCall",

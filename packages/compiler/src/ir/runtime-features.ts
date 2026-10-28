@@ -650,6 +650,7 @@ const PROCESS_EVENT_LIB_FNS: ReadonlySet<IrLibFn> = new Set([
   "process.prependExit",
   "process.prependSignal",
   "process.stdio",
+  "process.stdinIsRaw",
   "stdin.nextChunk",
   "stdin.onData",
   "stdin.onEnd",

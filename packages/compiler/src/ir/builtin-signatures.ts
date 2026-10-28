@@ -5367,6 +5367,10 @@ function buildLibFnSignatures() {
     "process.columns": { argTypes: [F64], result: VOID },
     /** Terminal height, with the same fd and optional-number contract. */
     "process.rows": { argTypes: [F64], result: VOID },
+    /** process.stdin.isRaw: the raw-mode flag of a TTY stdin as the
+     * module's interned `boolean | undefined` union (a pipe-backed stdin
+     * has no such flag — Node answers undefined there). Never throws. */
+    "process.stdinIsRaw": { argTypes: [], result: VOID },
     /** process.stdin.destroy(): a deliberate no-op (no stream machinery
      * exists to tear down; documented in SEMANTICS.md). */
     "process.stdinDestroy": { argTypes: [], result: VOID },

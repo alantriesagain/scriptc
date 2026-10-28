@@ -1734,6 +1734,15 @@ void scr_process_off_exit_island(uint32_t island) {
 }
 #endif
 
+/* process.stdin.isRaw: the raw-mode flag of a TTY stdin (1/0); a
+ * pipe-backed stdin has no such flag and answers Node's undefined, which
+ * the emitter's union construction spells -1. */
+double scr_process_stdin_is_raw(void) {
+  if (!scr_context_is_main()) return -1;
+  if (!scr_process_is_tty(0)) return -1;
+  return scr_stdio_raw ? 1.0 : 0.0;
+}
+
 /* process.prependListener("exit", cb): the same listener in front of the
  * registry's existing entries. */
 void scr_process_prepend_exit(ScrClosure *cb /*moves*/, void (*fn)(ScrClosure *, double)) {
