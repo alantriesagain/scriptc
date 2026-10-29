@@ -50,14 +50,18 @@ export function isProcessEnv(lowerer: Lowerer, node: ts.Expression): boolean {
   );
 }
 
-/** Whether `node` is the ambient `process.env` object, or a value HELD from
- * it through a chain of bindings: `const env = process.env`, `const alias =
- * env`, or the destructured `const { env } = process`. Node's held value IS
- * the environment object. Here the binding holds a snapshot record of it:
+/** Whether `node` is a value HELD from `process.env` through a chain of
+ * bindings: `const env = process.env`, `const alias = env`, or the
+ * destructured `const { env } = process`. Node's held value IS the
+ * environment object. Here the binding holds a snapshot record of it:
  * MEMBER accesses (`env.X`, `env[k]`, their writes, `delete env.X`) reroute
  * to the live table (see heldEnvValueType), and every BARE use re-snapshots
  * the environment at that use (see lowerIdentifierExpr), so both observe
- * the environment as Node's single object would. */
+ * the environment as Node's single object would.
+ *
+ * The ambient `process.env` itself is NOT a hold (depth === 0): it keeps
+ * its own direct lowering (envGet/envSet intrinsics, its existing snapshot
+ * when it escapes as a value), which is what Node's reads and writes see. */
 export function holdsEnvSnapshot(
   lowerer: Lowerer,
   node: ts.Expression | undefined,
@@ -77,7 +81,9 @@ export function holdsEnvSnapshot(
     }
     break;
   }
-  if (isProcessEnv(lowerer, inner)) return true;
+  // At depth 0 this IS the ambient object, not a value held from it; as a
+  // binding's initializer (depth >= 1) it is the hold's source.
+  if (isProcessEnv(lowerer, inner)) return depth > 0;
   if (!ts.isIdentifier(inner) || depth >= 4) return false;
   const symbol = lowerer.checker.getSymbolAtLocation(inner);
   const decl = symbol?.valueDeclaration ?? symbol?.declarations[0];
