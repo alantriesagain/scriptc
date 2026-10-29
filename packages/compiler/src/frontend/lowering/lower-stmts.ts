@@ -32,6 +32,7 @@ import { lowerCollectionSpread } from "./containers/collection-methods.js";
 import { lowerEventObjectPropertyWrite } from "./lower-event-target.js";
 import { lowerDynObjectLiteral } from "./expressions/object-literals.js";
 import { importMetaBindingSource } from "./import-meta.js";
+import { anyResidueReplacedBy } from "./any-collection-residue.js";
 import { iteratorCanStep, iteratorValue } from "./iterator-consumption.js";
 import { notIterableSpelling } from "./iterable-spelling.js";
 import { isPrivateSplitConsumer } from "./split-consumers.js";
@@ -259,7 +260,7 @@ import {
 import { keptIdentityAssertion } from "./assertion-identity.js";
 import { isNativeProxyInitializer } from "./expressions/native-proxy.js";
 import { tryLowerExpression } from "./expressions/try-lower-expression.js";
-import { lowerUnionFieldWrite } from "./expressions/union-fields.js";
+import { lowerUnionFieldDelete, lowerUnionFieldWrite } from "./expressions/union-fields.js";
 import {
   UNSUPPORTED,
   checkerPanicDiag,
@@ -2617,7 +2618,7 @@ export function lowerDestructuringDecl(
     init.type.kind === "dyn" &&
     ts.isObjectBindingPattern(decl.name) &&
     isJsSourceFile(ts.getSourceFileOfNode(decl)) &&
-    startsWithRuntimeKey(lowerer, decl.name) &&
+    (decl.name.elements.nodes.length === 0 || startsWithRuntimeKey(lowerer, decl.name)) &&
     destrSpellingOf(decl.initializer) !== null;
   if (
     jsRuntimeKeyCheck ||
@@ -3181,6 +3182,39 @@ export function lowerBindingPattern(
     // every statically non-nullish kind, record or not (the assignment
     // path's rule); possibly-nullish sources would throw in JS and keep
     // a fence.
+    //
+    // A CHECKED-DYNAMIC source still owes that step at runtime: an empty
+    // object pattern over null/undefined throws RequireObjectCoercible,
+    // and an empty array pattern throws GetIterator's "is not iterable".
+    // Nothing else about the pattern is observable, so the fence is the
+    // whole lowering.
+    if (srcType.kind === "dyn") {
+      const unitLoc = locOf(pattern);
+      const isObject = ts.isObjectBindingPattern(pattern);
+      for (const unit of ["null", "undefined"] as const) {
+        // V8 describes an argument-derived source by its type ("object
+        // null"); a bare non-empty pattern names its source instead, but
+        // those reads throw on their own before this check could fire.
+        const described = unit === "null" ? "object null" : "undefined";
+        const message = isObject
+          ? `Cannot destructure '${described}' as it is ${unit}.`
+          : `${described} is not iterable (cannot read property Symbol(Symbol.iterator))`;
+        out.push({
+          kind: "if",
+          cond: { kind: "dynTest", test: unit, value: srcRef(), type: BOOL, loc: unitLoc },
+          then: [
+            {
+              kind: "exprStmt",
+              expr: nodeThrowExpr(1, "", message, VOID, unitLoc),
+              loc: unitLoc,
+            },
+          ],
+          else_: null,
+          loc: unitLoc,
+        });
+      }
+      return;
+    }
     if (
       isUnitType(srcType) ||
       (srcType.kind === "union" &&
@@ -4738,6 +4772,16 @@ function stdlibGlobalTokenDestructure(
     ) {
       // A data member reads its value once, exactly like the spelled
       // `process.<member>` read the destructuring performs.
+    } else if (
+      globalName === "process" &&
+      propName === "cwd" &&
+      (value = lowerer.lowerBuiltinCallableValue(
+        { module: "process", member: propName },
+        locOf(el),
+      )) !== null
+    ) {
+      // process.cwd reads the directory when it is called, so the detached
+      // function is the same one every other spelling reads.
     } else {
       lowerer.unsupported(
         "SC1031",
@@ -6426,6 +6470,19 @@ export function lowerVarDecl(
         typeInvolvesWebStream(lowerer, lowerer.typeOf(decl.name))))
   )
     type = DYN;
+  // An unannotated TypeScript binding whose checker type carries `any`
+  // inference residue (`Map<any, any>` from an untyped `new Map()` joined
+  // into the initializer's type) takes the initializer's own layout when
+  // that layout replaces only the residue: `any` admits every use, and the
+  // value has that layout.
+  if (
+    !decl.type &&
+    type !== null &&
+    !isJsSourceFile(ts.getSourceFileOfNode(decl)) &&
+    !typeEquals(type, init.type) &&
+    anyResidueReplacedBy(lowerer, type, init.type)
+  )
+    type = init.type;
   // A const whose initializer has another record or array layout than the
   // binding's type keeps the initializer's layout: converting would copy the
   // value, so the binding would not be the value its initializer names.
@@ -7731,6 +7788,14 @@ function lowerDeleteStatement(lowerer: Lowerer, expr: ts.DeleteExpression): IrSt
       expr: { kind: "libCall", fn: "process.envUnset", args: [lowerKey()], type: VOID, loc },
       loc,
     };
+  }
+  // `delete u.f` on a union of records that every arm declares `f` optional
+  // on: dispatch over the arms and write each slot's ABSENT state (the
+  // monomorphic optional-field delete). Required fields, class arms and
+  // other receivers keep their own fences below.
+  if (ts.isPropertyAccessExpression(target)) {
+    const unionDelete = lowerUnionFieldDelete(lowerer, target);
+    if (unionDelete) return unionDelete;
   }
   let obj = lowerer.lowerExpr(target.expression);
   // `delete this.stack` in an Error subclass that declares a `stack`

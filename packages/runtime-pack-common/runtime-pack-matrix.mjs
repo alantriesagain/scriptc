@@ -68,6 +68,9 @@ export const OPTIONAL_RUNTIME_SOURCES = [
   // string_decoder's checked-dynamic chunk forms, apart from scr_bytes.c's
   // typed twins so a typed program keeps that object byte for byte.
   ["scr_bytes_strdec_dyn.c", "strdecDyn"],
+  // BigIntStats member reads (`statSync(p, { bigint: true })` members). The
+  // bigstats gate is narrower than bigint, which every bigint value turns on.
+  ["scr_stats_bigint.c", "bigstats"],
   ["scr_regex.c", "regex"],
   ["scr_glob.c", "regex"],
   ["scr_idna.c", "regex"],

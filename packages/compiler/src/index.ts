@@ -633,6 +633,7 @@ async function compileExecutableNative(
    * (BuildSources): the spelling clang sees and native cache keys name. */
   llvmVisiblePath?: string,
   profileLayout = false,
+  hugeText = true,
 ): Promise<void> {
   const programIsObject = /\.(?:o|obj)$/.test(llvmPath);
   const runtimePackTarget = programIsObject && !sanitize ? nativeCodegenTarget() : null;
@@ -650,6 +651,7 @@ async function compileExecutableNative(
       ...(windowsSubsystem === undefined ? {} : { windowsSubsystem }),
       ...(profileGenerate ? { profileGenerate: true } : {}),
       ...(profileLayout ? { profileLayout: true } : {}),
+      ...(hugeText ? {} : { hugeText: false }),
       programObjectDependencies,
     });
     const cacheableLinker =
@@ -733,6 +735,7 @@ async function compileExecutableNative(
     emitter: features.emitter,
     symbol: features.symbol,
     bigint: features.bigint,
+    ...(features.bigstats ? { bigstats: true } : {}),
     searchParams: features.searchParams,
     qs: features.qs,
     utilPromisify: features.utilPromisify,
@@ -1825,6 +1828,7 @@ async function compileTracked(
       // identity (node-islands/libnode.ts) and a hit requires it unchanged.
       libnodeIdentity: () => libnodeCacheKey(opts.libnode, process.env, dirname(entryPath)),
       ...(opts.largePages === true ? { largePages: true as const } : {}),
+      ...(opts.hugeText === false ? { noHugeText: true as const } : {}),
       ...(opts.exceptions === "rare" ? { exceptions: "rare" as const } : {}),
       ...targetCpuField(opts.targetCpu),
       ...(opts.cpuDispatch === true ? { cpuDispatch: true as const } : {}),
@@ -2005,6 +2009,7 @@ async function compileTracked(
         profile?.generate !== undefined,
         hitSources.llvmPath,
         nativeProfileLayout(profile),
+        opts.hugeText !== false,
       );
       if (nativeProgramObject !== null && opts.nativeProgramObject === true) {
         await rename(nativeProgramObject.linkPath, nativeProgramObject.artifactPath);
@@ -2153,6 +2158,7 @@ async function compileTracked(
       profile?.generate !== undefined,
       llvmPath,
       nativeProfileLayout(profile),
+      opts.hugeText !== false,
     );
     timing("native-link");
     if (nativeProgramObject !== null && opts.nativeProgramObject === true) {

@@ -4101,6 +4101,50 @@ static ssize_t scr_fs_write_once(int fd, const void *data, size_t length,
 #ifdef SIGXFSZ
   sigaddset(&write_set, SIGXFSZ);
 #endif
+  /* A thread that keeps both signals blocked (the fs pool's threads) writes
+   * without changing its mask; a write that fails with EPIPE or EFBIG then
+   * consumes the signal it left pending. The answer is per OS thread and
+   * computed once: _Thread_local, not SCR_TL, which is empty in builds
+   * without thread instances while the pool threads still exist. */
+  static _Thread_local signed char thread_blocks = -1;
+  if (thread_blocks < 0) {
+    sigset_t current;
+    bool blocks = pthread_sigmask(SIG_BLOCK, NULL, &current) == 0;
+#ifdef SIGPIPE
+    blocks = blocks && sigismember(&current, SIGPIPE) == 1;
+#endif
+#ifdef SIGXFSZ
+    blocks = blocks && sigismember(&current, SIGXFSZ) == 1;
+#endif
+    thread_blocks = blocks ? 1 : 0;
+  }
+  if (thread_blocks == 1) {
+    ssize_t n = positioned
+      ? scr_fs_pwrite(fd, data, length, position)
+      : write(fd, data, length);
+    if (n < 0) {
+      int write_errno = errno;
+      int raised = 0;
+#ifdef SIGPIPE
+      if (write_errno == EPIPE) raised = SIGPIPE;
+#endif
+#ifdef SIGXFSZ
+      if (write_errno == EFBIG) raised = SIGXFSZ;
+#endif
+      if (raised != 0 && sigpending(&pending) == 0 && sigismember(&pending, raised) == 1) {
+        sigset_t raised_set;
+        sigemptyset(&raised_set);
+        sigaddset(&raised_set, raised);
+        int caught = 0;
+        int wait_err;
+        do {
+          wait_err = sigwait(&raised_set, &caught);
+        } while (wait_err == EINTR);
+      }
+      errno = write_errno;
+    }
+    return n;
+  }
   if (pthread_sigmask(SIG_BLOCK, &write_set, &old_set) != 0) {
     return positioned
       ? scr_fs_pwrite(fd, data, length, position)
@@ -5189,6 +5233,12 @@ bool scr_process_is_tty(double fd) {
   return isatty((int)fd) != 0;
 }
 
+/* tty.isatty as a function value (borrowed argument): a value that is not a
+ * number answers false and is never coerced, as Node's integer test does. */
+bool scr_process_is_tty_value(const ScrDyn *fd) {
+  return fd != NULL && fd->kind == SCR_DYN_NUM && scr_process_is_tty(fd->v.num);
+}
+
 /* Terminal geometry for process.stdout/stderr.columns/rows: ioctl(TIOCGWINSZ) on
  * the stream's fd, exactly Node's tty.WriteStream source of truth. A
  * non-TTY stream, or a terminal that refuses the ioctl, answers -1 and
@@ -5301,33 +5351,10 @@ void scr_process_stdin_destroy(void) {
  * rejects (see the fsp section). scr_stats_dyn builds Node's Stats and
  * BigIntStats objects from the same snapshot. */
 
-/* The integers in the order Node's binding reports them. */
-enum {
-  SCR_STATS_DEV,
-  SCR_STATS_MODE,
-  SCR_STATS_NLINK,
-  SCR_STATS_UID,
-  SCR_STATS_GID,
-  SCR_STATS_RDEV,
-  SCR_STATS_BLKSIZE,
-  SCR_STATS_INO,
-  SCR_STATS_SIZE,
-  SCR_STATS_BLOCKS,
-  SCR_STATS_FIELDS
-};
-
-/* The timestamps, each kept as seconds + nanoseconds. */
-enum { SCR_STATS_ATIME, SCR_STATS_MTIME, SCR_STATS_CTIME, SCR_STATS_BIRTHTIME };
-
-struct ScrStats {
-  size_t rc;
-  bool is_file;
-  bool is_dir;
-  bool is_symlink; /* lstat only — a followed stat never sees one */
-  uint64_t fields[SCR_STATS_FIELDS]; /* blocks counts 512-byte units */
-  int64_t sec[4];
-  int64_t nsec[4];
-};
+/* The layout (the field enum, the timestamp enum and the struct) lives in
+ * scr_stats_private.h so scr_stats_bigint.c can read the same snapshot
+ * without this unit carrying its code. */
+#include "scr_stats_private.h"
 
 ScrStats *scr_stats_retain(ScrStats *s) {
   if (s->rc != SIZE_MAX) s->rc++;

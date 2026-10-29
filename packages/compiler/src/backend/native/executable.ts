@@ -158,6 +158,11 @@ const RUNTIME_UNITS: readonly RuntimeUnit[] = [
   unit((u) => u.opts.fsFlags === true, "scr_fs_flags.c"),
   // string_decoder's checked-dynamic chunk forms, beside their typed twins.
   unit((u) => u.opts.strdecDyn === true, "scr_bytes_strdec_dyn.c"),
+  // BigIntStats member reads (`statSync(p, { bigint: true })` integers and
+  // `*Ns`/`*Ms` members). Gated on the reads themselves (the bigstats
+  // feature), not on bigint: every bigint value or wasm conversion turns
+  // bigint on, and the linked getters would move their executable.
+  unit((u) => u.opts.bigstats === true, "scr_stats_bigint.c"),
   // win32 targets compile the libc-shim TU (stpcpy, arc4random_buf,
   // gmtime_r, strcasestr — the _WIN32 block in scr_runtime.h declares
   // them) and link advapi32 (the CSPRNG RtlGenRandom/SystemFunction036,

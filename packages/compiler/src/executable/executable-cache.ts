@@ -97,6 +97,8 @@ export interface EarlyExecutableNativeFeatures {
   emitter: boolean;
   symbol: boolean;
   bigint: boolean;
+  /** BigIntStats member reads: scr_stats_bigint.c. Absent (false) otherwise. */
+  bigstats?: boolean;
   searchParams: boolean;
   qs: boolean;
   utilPromisify: boolean;
@@ -173,6 +175,8 @@ export interface EarlyExecutableCacheOptions {
   libnodeIdentity?: () => string | undefined;
   /** Omitted unless --large-pages is set. */
   largePages?: true;
+  /** Omitted unless the build links without huge text (CompileOptions.hugeText). */
+  noHugeText?: true;
   /** Omitted unless --exceptions=rare is set. */
   exceptions?: "rare";
   /** Omitted for the x86-64 baseline (`--target-cpu`). */
@@ -344,6 +348,7 @@ function cacheKey(options: EarlyExecutableCacheOptions): string {
     ...(options.windowsSubsystem === "gui" ? ["windows-subsystem-gui"] : []),
     ...(options.detachedExit ? ["detached-exit"] : []),
     ...(options.largePages ? ["large-pages"] : []),
+    ...(options.noHugeText ? ["no-huge-text"] : []),
     ...(options.exceptions === "rare" ? ["exceptions-rare"] : []),
     ...targetCpuKeyParts(options.targetCpu),
     ...cpuDispatchKeyParts(options.cpuDispatch),
@@ -394,6 +399,7 @@ function routeKey(options: Omit<EarlyExecutableRouteOptions, "nativeEnvironment"
   if (options.windowsSubsystem === "gui") hash.update("windows-subsystem-gui\0");
   if (options.detachedExit) hash.update("detached-exit\0");
   if (options.largePages) hash.update("large-pages\0");
+  if (options.noHugeText) hash.update("no-huge-text\0");
   if (options.exceptions === "rare") hash.update("exceptions-rare\0");
   for (const part of targetCpuKeyParts(options.targetCpu)) hash.update(`${part}\0`);
   for (const part of cpuDispatchKeyParts(options.cpuDispatch)) hash.update(`${part}\0`);
