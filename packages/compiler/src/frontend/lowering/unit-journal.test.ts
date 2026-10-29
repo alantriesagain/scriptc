@@ -48,6 +48,7 @@ const sized: Record<string, readonly string[]> = {
     "methodResults",
     "widths",
     "sourceProbes",
+    "clones",
     "observed",
     "changed",
     "keptSourceShapes",

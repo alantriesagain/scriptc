@@ -25,6 +25,10 @@ function reflect(label: string, r: Narrow): void {
   console.log(label, "entries", JSON.stringify(Object.entries(r)));
   console.log(label, "values", JSON.stringify(Object.values(r)));
   console.log(label, "assign", JSON.stringify(Object.assign({}, r)));
+  const same: Narrow = { ...r };
+  console.log(label, "copy", JSON.stringify(same));
+  const clone: Narrow = { ...r, a: 2 };
+  console.log(label, "clone", JSON.stringify(clone), Object.keys(clone).join(","));
 }
 reflect("spread", spread);
 reflect("parsed", parsed);

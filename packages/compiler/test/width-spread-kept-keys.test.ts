@@ -136,3 +136,27 @@ export {};
   expect(ir).not.toContain("%widthKeys");
 });
 
+test("a same-shape spread of a kept record copies its own keys", async () => {
+  const { notes, ir } = await sourceNotes(
+    `type Narrow = { a: number; b?: string };
+const r = JSON.parse('{"a":1}') as Narrow;
+const copy: Narrow = { ...r };
+console.log(JSON.stringify(copy));
+export {};
+`,
+  );
+  expect(notes).toBe(1);
+  expect(ir).toContain("%widthKeys");
+});
+
+test("a top-level record scope stays byte-identical without kept sources", async () => {
+  const { notes } = await sourceNotes(
+    `type Narrow = { a: number; b?: string };
+const r: Narrow = { a: 1 };
+const copy: Narrow = { ...r, b: "x" };
+console.log(JSON.stringify(copy));
+export {};
+`,
+  );
+  expect(notes).toBe(0);
+});

@@ -1532,7 +1532,13 @@ export function lowerObjectLiteral(
             lowerer.badType(valueNode, lowerer.typeOf(valueNode));
           overrides.push({ name, value });
         }
-        return { kind: "recordClone", source, overrides, type, loc };
+        return lowerer.keyOrder.clone({
+          kind: "recordClone",
+          source,
+          overrides,
+          type,
+          loc,
+        });
       }
       leadingSpreadLowered = source;
     }
@@ -1830,6 +1836,10 @@ export function lowerObjectLiteral(
   const widthSegments: WidthSegment[] = [];
   let widthDrops = false;
   let widthBlocked = false;
+  // A checked-dynamic spread source's own keys are a run-time fact: even
+  // when the checker's shape fits the target, the copied object can hold
+  // more (slice 3).
+  let widthDynSource = false;
   for (const prop of expr.properties.nodes) {
     // A later contributor can mutate an earlier source or overwrite a
     // value with effects. Snapshot pending fields at their source position,
@@ -1940,6 +1950,7 @@ export function lowerObjectLiteral(
       if (condRecord !== null || srcLowered.kind !== "varRef") widthBlocked = true;
       else {
         widthSegments.push({ kind: "spread", value: srcLowered });
+        if (srcLowered.type.kind === "dyn") widthDynSource = true;
       }
       // Array callbacks can receive a record-or-undefined ABI even when
       // TypeScript describes a required record. Select the copy strategy
@@ -2685,13 +2696,12 @@ export function lowerObjectLiteral(
     orderSegments,
   );
   if (
-    widthDrops &&
     !widthBlocked &&
     spreadStmts.length > 0 &&
     type.kind === "record" &&
     recordMayKeepSource(lowerer, type)
   )
-    lowerer.keyOrder.width(result, widthSegments, widthDrops);
+    lowerer.keyOrder.width(result, widthSegments, widthDrops || widthDynSource);
   return spreadStmts.length === 0
     ? result
     : { kind: "seqExpr", stmts: spreadStmts, result, type, loc };
