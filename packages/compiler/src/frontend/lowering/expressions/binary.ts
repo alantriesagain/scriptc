@@ -380,6 +380,19 @@ function untypedCollectionFallback(lowerer: Lowerer, node: ts.Expression): boole
   });
 }
 
+/** An empty `[]` literal whose own type is `never[]` (no contextual array
+ * type supplied one): the `??` default of an optional array read. */
+function emptyNeverArrayLiteral(lowerer: Lowerer, node: ts.Expression): boolean {
+  let value = node;
+  while (ts.isParenthesizedExpression(value)) value = value.expression;
+  if (!ts.isArrayLiteralExpression(value) || value.elements.nodes.length > 0) return false;
+  const own = lowerer.typeOf(value);
+  return (
+    lowerer.checker.isArrayType(own) &&
+    (lowerer.checker.getTypeArguments(own as ts.TypeReference)[0]!.flags & ts.TypeFlags.Never) !== 0
+  );
+}
+
 export function lowerNullishPair(
   lowerer: Lowerer,
   expr: ts.BinaryExpression,
@@ -430,6 +443,23 @@ export function lowerNullishPair(
   ) {
     const right = lowerer.lowerExprExpecting(expr.right, rest[0]!);
     return { kind: "nullish", left, right, type: rest[0]!, loc };
+  }
+  // An EMPTY array-literal default (`''.match(re) ?? []`) has no element of
+  // its own: tsc infers `never[]`, whose f64-element mapping the whole
+  // expression keeps as a second array arm (`RegExpMatchArray | number[]`),
+  // a result no single array slot can receive. It adopts the left's present
+  // array arm instead — the empty-literal rule the union slot and the
+  // ternary arm already state — so `?? []` answers the left's array type.
+  // A JavaScript `[]` is `any[]` and keeps the dynamic path.
+  if (
+    rest.length === 1 &&
+    rest[0]!.kind === "array" &&
+    !isJsSourceFile(ts.getSourceFileOfNode(expr.right)) &&
+    emptyNeverArrayLiteral(lowerer, expr.right)
+  ) {
+    const right = lowerer.lowerExprExpecting(expr.right, rest[0]!);
+    if (typeEquals(right.type, rest[0]!))
+      return { kind: "nullish", left, right, type: rest[0]!, loc };
   }
   let type = lowerer.irTypeOf(expr);
   // A runtime-optional read can reach the default even when declarations
