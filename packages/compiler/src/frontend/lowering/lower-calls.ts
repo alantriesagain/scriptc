@@ -4,6 +4,7 @@ import {
   lowerArrayClassStaticCall,
 } from "./builtins/array-classes.js";
 import { structuralCallInstance } from "./structural-instances.js";
+import { classViewOf } from "./class-views.js";
 import { checkedPrivateMethodReceiver, privateNameClass } from "./private-brands.js";
 import { assertFunctionAliasOf } from "./lower-assert.js";
 import { keyedHelperName } from "./stable-names.js";
@@ -11365,7 +11366,8 @@ function maybePromiseHandlerResult(
   return stmt;
 }
 
-/** `view.m(args)` where `view` is a `Pick<C, K>` / `Omit<C, K>` view of a
+/** `view.m(args)` where `view` is a `Pick<C, K>` / `Omit<C, K>` view (inline
+ * or through type aliases, classViewOf) of a
  * program class C and `m` is one of C's GENERIC methods (its overloads
  * included): generic methods have no dispatchable method value, so the
  * view's live receiver is extracted as the C instance it holds (a checked
@@ -11378,11 +11380,9 @@ function pickViewGenericMethodCall(
   access: ts.PropertyAccessExpression,
   recvTs: ts.Type,
 ): IrExpr | null {
-  const alias = recvTs.getAliasSymbol();
-  if (alias === undefined || (ts.symbolName(alias) !== "Pick" && ts.symbolName(alias) !== "Omit"))
-    return null;
-  if (!alias.declarations.every((d) => ts.getSourceFileOfNode(d).isDeclarationFile)) return null;
-  const source = recvTs.getAliasTypeArguments()[0];
+  const view = classViewOf(lowerer.checker, recvTs);
+  if (view === null) return null;
+  const source = view.source;
   const symbol = source?.getSymbol();
   const info = symbol ? lowerer.classBySymbol.get(symbol) : undefined;
   if (!info || call.questionDotToken || access.questionDotToken) return null;
@@ -11402,7 +11402,7 @@ function pickViewGenericMethodCall(
     lowerer.unsupported(
       "SC1090",
       access,
-      `calling the generic method '${access.name.text}' through a '${ts.symbolName(alias)}' view of '${info.def.name}' that holds a '${lowerer.fmt(lowered.type)}'`,
+      `calling the generic method '${access.name.text}' through a '${view.name}' view of '${info.def.name}' that holds a '${lowerer.fmt(lowered.type)}'`,
     );
   }
   const receiver: IrExpr =
