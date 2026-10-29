@@ -2854,6 +2854,30 @@ function immediateObjectTagReceiver(
   return null;
 }
 
+/** Array.prototype methods whose `.<name>.call(receiver, ...)` form the
+ * array-like unit runs generically when `receiver` is not a native array:
+ * the rest of the prototype's methods besides the invoke unit's own set
+ * (at, slice, indexOf, lastIndexOf, includes and the higher-order
+ * callbacks). */
+const ARRAY_LIKE_BORROW_METHODS = new Set([
+  "concat",
+  "copyWithin",
+  "fill",
+  "flat",
+  "flatMap",
+  "join",
+  "pop",
+  "push",
+  "reverse",
+  "shift",
+  "splice",
+  "toReversed",
+  "toSorted",
+  "toSpliced",
+  "unshift",
+  "with",
+]);
+
 const ARRAY_BORROW_METHODS = new Set([
   "at",
   "every",
@@ -2890,7 +2914,9 @@ function lowerArrayPrototypeBorrowCall(
   const method = access.expression;
   if (
     method.questionDotToken ||
-    !ARRAY_BORROW_METHODS.has(method.name.text) ||
+    !(
+      ARRAY_BORROW_METHODS.has(method.name.text) || ARRAY_LIKE_BORROW_METHODS.has(method.name.text)
+    ) ||
     !ts.isPropertyAccessExpression(method.expression) ||
     method.expression.questionDotToken ||
     method.expression.name.text !== "prototype" ||
@@ -2905,7 +2931,12 @@ function lowerArrayPrototypeBorrowCall(
   const args = call.arguments.nodes.slice(1).map((arg) => lowerer.lowerExprExpecting(arg, DYN));
   return {
     kind: "libCall",
-    fn: "dyn.arrayProtoCall",
+    // The array-like unit runs an extended method's algorithm over a
+    // receiver that is not a native array and delegates the rest to the
+    // invoke unit's dispatch.
+    fn: ARRAY_LIKE_BORROW_METHODS.has(method.name.text)
+      ? "dyn.arrayLikeProtoCall"
+      : "dyn.arrayProtoCall",
     args: [
       receiver,
       { kind: "strLit", value: method.name.text, type: STRING, loc },
