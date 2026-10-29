@@ -43,6 +43,7 @@ import {
   symbolFieldDisplayName,
 } from "../symbol-fields.js";
 import { planUnionRetag } from "../union-retag.js";
+import { literalValues } from "../../literal-values.js";
 import { jsHoldsDynObject, runtimeOptionalStorageOperand } from "../lower-exprs.js";
 import { builtinGlobalValue } from "./property-access.js";
 import { holdsEvolvingArray } from "../lower-stmts.js";
@@ -850,6 +851,10 @@ export function lowerObjectLiteral(
   lowerer: Lowerer,
   expr: ts.ObjectLiteralExpression,
   expected?: IrType & { kind: "record" },
+  /** Build exactly at `expected` (one arm of a distributed union spread,
+   * lowerDistributedUnionSpread): the checker types the literal as the
+   * whole union, so its contextual type cannot choose the layout. */
+  exact = false,
 ): IrExpr {
   // A spread of an untyped (`any`) source into a typed slot: TypeScript
   // types such a literal `any`, and the copy holds whatever own properties
@@ -968,7 +973,7 @@ export function lowerObjectLiteral(
   ) {
     return lowerDynObjectLiteral(lowerer, expr);
   }
-  const unionClone = lowerUnionRecordClone(lowerer, expr);
+  const unionClone = exact ? null : lowerUnionRecordClone(lowerer, expr);
   if (unionClone !== null) return unionClone;
   // The RUNTIME-KEYED literal (JS): a computed key that doesn't fold to a
   // compile-time string means the literal's shape is not a compile-time
@@ -1106,7 +1111,7 @@ export function lowerObjectLiteral(
   ) {
     tsType = lowerer.checker.getAwaitedType(tsType) ?? tsType;
   }
-  let mapped = lowerer.mapTypeOf(tsType);
+  let mapped = exact && expected ? expected : lowerer.mapTypeOf(tsType);
   // A checked-dynamic source has runtime keys even when later explicit
   // fields make the literal's inferred type look like a fixed record.
   // Keep a checked-dynamic destination in that representation so copying
@@ -1314,6 +1319,13 @@ export function lowerObjectLiteral(
     lowerer.unsupported("SC1090", deferredConditionalSpread, CONDITIONAL_SPREAD_FENCE);
   }
   if (!mapped || mapped.kind !== "record") {
+    // Distribute against the contextual union when there is one (its arms
+    // carry the discriminants), else against the literal's own union.
+    const ctx = lowerer.mapTypeOf(tsType);
+    const distributed = exact
+      ? null
+      : lowerDistributedUnionSpread(lowerer, expr, ctx?.kind === "union" ? ctx : mapped);
+    if (distributed) return distributed;
     // A spread merge over UNION-typed sources (`{ ...base, ...override }`
     // with `base`, `override` of arm-union types) has one field set per
     // combination of source arms, so its own type is a union of records.
@@ -1915,7 +1927,7 @@ export function lowerObjectLiteral(
           ? lowerConditionalRecordSpread(lowerer, condRecord, locOf(prop))
           : prop === expr.properties.nodes[0] && leadingSpreadLowered !== null
             ? leadingSpreadLowered
-            : lowerer.lowerExpr(srcNode),
+            : (lowerer.spreadArmOverrides.get(srcNode) ?? lowerer.lowerExpr(srcNode)),
       );
       // Array callbacks can receive a record-or-undefined ABI even when
       // TypeScript describes a required record. Select the copy strategy
@@ -2661,6 +2673,217 @@ function isEmptyArrayLiteral(node: ts.Node): boolean {
   let inner = node;
   while (ts.isParenthesizedExpression(inner)) inner = inner.expression;
   return ts.isArrayLiteralExpression(inner) && inner.elements.nodes.length === 0;
+}
+
+/** `{ ...u, k: v }` where the spread source `u` is a union of records (and
+ * unit arms): TypeScript types the literal as the union of one spread per
+ * source arm, so it is built that way. The source evaluates once into a
+ * hidden local; a tag dispatch builds the running arm's literal with that
+ * arm as the source, at the destination arm chosen for it:
+ *   1. the arms the discriminant's last writer selects (an explicit
+ *      property, or the source arm when it carries the field);
+ *   2. among those, the source arm itself (`{ ...command, id }`);
+ *   3. else the one arm whose keys are exactly the keys the literal writes.
+ * Every key a contributor may write must be a field of the destination:
+ * the record path's width copy would drop the others, and Node keeps them.
+ * So a genuine merge (`{ ...http, ...patch }` where `patch` may carry a
+ * stdio-only key) stays refused. A stored source the checker narrowed
+ * converts through the checked re-tag first, so an excluded arm (a hidden
+ * absence arm included) throws the catchable TypeError. Null when the
+ * literal is not this shape, before anything is lowered except the
+ * source; the caller keeps its refusal. */
+function lowerDistributedUnionSpread(
+  lowerer: Lowerer,
+  expr: ts.ObjectLiteralExpression,
+  mapped: IrType | null,
+): IrExpr | null {
+  if (isJsSourceFile(ts.getSourceFileOfNode(expr))) return null;
+  if (mapped?.kind !== "union") return null;
+  const target = lowerer.unions.get(mapped.unionId);
+  if (!target) return null;
+  const props = expr.properties.nodes;
+  // Exactly one distributed source: a plain spread whose checker type maps
+  // to a union of records and unit arms. Several would be a product.
+  let spreadIndex = -1;
+  let srcNode: ts.Expression | null = null;
+  for (let i = 0; i < props.length; i++) {
+    const prop = props[i]!;
+    if (!ts.isSpreadAssignment(prop)) continue;
+    if (
+      conditionalSpreadOf(prop.expression) !== null ||
+      andSpreadOf(lowerer, prop.expression) !== null ||
+      conditionalRecordSpreadOf(lowerer, prop.expression) !== null
+    )
+      continue;
+    let node: ts.Expression = prop.expression;
+    while (ts.isParenthesizedExpression(node)) node = node.expression;
+    if (lowerer.mapTypeOf(lowerer.typeOf(node))?.kind !== "union") continue;
+    if (srcNode !== null) return null;
+    spreadIndex = i;
+    srcNode = node;
+  }
+  if (srcNode === null) return null;
+  const site = srcNode;
+  // The source evaluates before the dispatch, so everything written before
+  // it must be free of effects.
+  for (const prop of props.slice(0, spreadIndex)) {
+    if (ts.isShorthandPropertyAssignment(prop)) continue;
+    if (ts.isPropertyAssignment(prop) && pureKeyExpr(lowerer, prop.initializer)) continue;
+    return null;
+  }
+  const siteType = lowerer.mapTypeOf(lowerer.typeOf(site));
+  if (siteType?.kind !== "union") return null;
+  const siteDef = lowerer.unions.get(siteType.unionId);
+  if (!siteDef || !siteDef.arms.every((arm) => arm.kind === "record" || isUnitType(arm)))
+    return null;
+  const discField = target.discriminant?.field;
+  // The discriminant values the literal's LAST writer of that field gives
+  // this source arm; null when unknown.
+  const discriminantOf = (tag: number, arm: IrType): ReturnType<typeof literalValues> => {
+    if (discField === undefined) return null;
+    for (let i = props.length - 1; i >= 0; i--) {
+      const prop = props[i]!;
+      if (i === spreadIndex) {
+        if (arm.kind !== "record") continue;
+        if (!lowerer.shapes.get(arm.shapeId)?.fields.some((f) => f.name === discField)) continue;
+        const own = siteDef.discriminant;
+        return own?.field === discField
+          ? (own.cases.find((c) => c.tag === tag)?.values ?? null)
+          : null;
+      }
+      if (ts.isSpreadAssignment(prop)) return null;
+      if (
+        (ts.isPropertyAssignment(prop) || ts.isShorthandPropertyAssignment(prop)) &&
+        propNameText(lowerer, prop.name) === discField
+      )
+        return ts.isPropertyAssignment(prop)
+          ? literalValues(lowerer.typeOf(prop.initializer))
+          : literalValues(lowerer.typeOf(prop.name));
+    }
+    return null;
+  };
+  // Every key some contributor may write for this source arm; null when a
+  // contributor has no fixed key set (an index signature, a non-record).
+  const writtenKeys = (arm: IrType): Set<string> | null => {
+    const names = new Set<string>();
+    for (let i = 0; i < props.length; i++) {
+      const prop = props[i]!;
+      if (ts.isSpreadAssignment(prop)) {
+        let node: ts.Expression = prop.expression;
+        while (ts.isParenthesizedExpression(node)) node = node.expression;
+        const t = i === spreadIndex ? arm : lowerer.mapTypeOf(lowerer.typeOf(node));
+        if (t !== null && isUnitType(t)) continue;
+        if (t?.kind !== "record") return null;
+        const shape = lowerer.shapes.get(t.shapeId);
+        if (!shape || shape.indexValue || shape.tuple) return null;
+        for (const f of shape.fields) names.add(f.name);
+      } else if (ts.isPropertyAssignment(prop) || ts.isShorthandPropertyAssignment(prop)) {
+        names.add(propNameText(lowerer, prop.name));
+      } else {
+        return null;
+      }
+    }
+    return names;
+  };
+  const destinationOf = (tag: number, arm: IrType): (IrType & { kind: "record" }) | null => {
+    const keys = writtenKeys(arm);
+    if (keys === null) return null;
+    let candidates = target.arms
+      .map((a, t) => ({ a, t }))
+      .filter((c): c is { a: IrType & { kind: "record" }; t: number } => c.a.kind === "record")
+      .filter((c) => {
+        const fields = lowerer.shapes.get(c.a.shapeId)!.fields;
+        return [...keys].every((k) => fields.some((f) => f.name === k));
+      });
+    const values = discriminantOf(tag, arm);
+    if (values && values.length > 0 && target.discriminant) {
+      const cases = target.discriminant.cases;
+      candidates = candidates.filter((c) =>
+        (cases.find((k) => k.tag === c.t)?.values ?? []).some((v) => values.includes(v)),
+      );
+    }
+    if (candidates.length === 1) return candidates[0]!.a;
+    if (arm.kind === "record") {
+      const same = candidates.find((c) => c.a.shapeId === arm.shapeId);
+      if (same) return same.a;
+    }
+    const exactKeys = candidates.filter(
+      (c) => lowerer.shapes.get(c.a.shapeId)!.fields.length === keys.size,
+    );
+    return exactKeys.length === 1 ? exactKeys[0]!.a : null;
+  };
+  // Plan every arm before lowering anything.
+  const plan: { tag: number; arm: IrType; destination: IrType & { kind: "record" } }[] = [];
+  for (let tag = 0; tag < siteDef.arms.length; tag++) {
+    const arm = siteDef.arms[tag]!;
+    const destination = destinationOf(tag, arm);
+    if (destination === null) return null;
+    plan.push({ tag, arm, destination });
+  }
+  const loc = locOf(expr);
+  let source = lowerer.lowerExpr(site);
+  if (source.type.kind === "union" && !typeEquals(source.type, siteType)) {
+    const helper = lowerer.narrowedRetagHelper(
+      site,
+      source.type.unionId,
+      siteType.unionId,
+      source.loc,
+    );
+    if (helper)
+      source = { kind: "call", callee: helper, args: [source], type: siteType, loc: source.loc };
+  }
+  if (!typeEquals(source.type, siteType)) return null;
+  const saved = lowerer.declareHiddenLocal("%spreadArms", siteType);
+  const ref = varRef(saved.id, siteType, loc);
+  let result: IrExpr | null = null;
+  for (let i = plan.length - 1; i >= 0; i--) {
+    const { tag, arm, destination } = plan[i]!;
+    const armValue: IrExpr =
+      arm.kind === "record"
+        ? { kind: "unionNarrow", value: ref, unionId: siteType.unionId, tag, type: arm, loc }
+        : {
+            kind: "recordLit",
+            fields: [],
+            type: { kind: "record", shapeId: lowerer.shapes.intern([]) },
+            loc,
+          };
+    lowerer.spreadArmOverrides.set(site, armValue);
+    let built: IrExpr;
+    try {
+      built = lowerObjectLiteral(lowerer, expr, destination, true);
+    } finally {
+      lowerer.spreadArmOverrides.delete(site);
+    }
+    const wrapped = lowerer.coerceToExpected(built, mapped);
+    if (!typeEquals(wrapped.type, mapped)) return null;
+    result =
+      result === null
+        ? wrapped
+        : {
+            kind: "ternary",
+            cond: {
+              kind: "unionIsTag",
+              value: ref,
+              unionId: siteType.unionId,
+              tag,
+              negated: false,
+              type: BOOL,
+              loc,
+            },
+            then: wrapped,
+            else_: result,
+            type: mapped,
+            loc,
+          };
+  }
+  if (result === null) return null;
+  return {
+    kind: "seqExpr",
+    stmts: [{ kind: "varDecl", localId: saved.id, init: source, loc }],
+    result,
+    type: mapped,
+    loc,
+  };
 }
 
 /** A union of plain records can preserve its existing variant while

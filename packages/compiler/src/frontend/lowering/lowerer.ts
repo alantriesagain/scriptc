@@ -3548,6 +3548,9 @@ export class Lowerer {
   readonly neverValued = new Set<IrExpr>();
   readonly chainNarrowedType = new Map<ts.Node, ts.Type>();
   readonly chainHandled = new Set<ts.Node>();
+  /** One arm's narrowed value for a spread source while a distributed
+   * union spread lowers that arm (lowerDistributedUnionSpread). */
+  readonly spreadArmOverrides = new Map<ts.Node, IrExpr>();
   /** for-of-over-matchAll bindings whose `.index` reads the companion-index
    * array: binding SYMBOL → the hidden number[] of match start indices plus
    * the hidden cursor holding THIS iteration's position (registered while
@@ -4617,6 +4620,7 @@ export class Lowerer {
     "neverValued",
     "chainNarrowedType",
     "chainHandled",
+    "spreadArmOverrides",
     "splitIdentifierUses",
     "typeMemo",
     "fnStack",
