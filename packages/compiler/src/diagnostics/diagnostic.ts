@@ -768,6 +768,10 @@ export const FENCE_CODES: Record<string, { name: string; status: "unsupported" }
     name: "npm package imports and values without native lowering",
     status: "unsupported",
   },
+  SC2014: {
+    name: "writes through a value held from process.env (a snapshot, not the live table)",
+    status: "unsupported",
+  },
   SC2020: {
     name: "standard-library or @types/node surface with no lowering",
     status: "unsupported",
@@ -1111,6 +1115,22 @@ export function computedRequireDiag(surface: string, loc: SrcLoc): ScrDiagnostic
     loc,
     milestone: "later",
     hint: 'require("<static string literal>") compiles the module into the program; native addons need a replacement through native FFI (https://scriptc.dev/ffi#replacing-a-node-api-addon)',
+  };
+}
+
+/** A write through a value HELD from `process.env` (`const env =
+ * process.env; env.X = "1"`, `delete env[k]`): the held value is a snapshot
+ * record of the environment, not the live table, so the write would land on
+ * the copy and be lost while Node's write reaches setenv(3) through the same
+ * object. Refuse at the write instead of letting it disappear. */
+export function heldEnvWriteDiag(loc: SrcLoc): ScrDiagnostic {
+  return {
+    code: "SC2014",
+    message:
+      "a write through a value held from process.env is not supported: the held value is a snapshot copy of the environment, so the write would be lost while Node writes the real environment",
+    loc,
+    milestone: "later",
+    hint: "read and write the live variable directly (process.env.NAME or process.env[key]), or write into a fresh copy: const env = { ...process.env, NAME: value }",
   };
 }
 

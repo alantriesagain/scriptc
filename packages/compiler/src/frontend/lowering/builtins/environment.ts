@@ -1,7 +1,8 @@
 import { dynUndefinedExpr } from "../../../ir/build.js";
 import * as ts from "../../ts7/adapter.js";
-import { type Lowerer } from "../lowerer.js";
+import { type Lowerer, PoisonError } from "../lowerer.js";
 import { locOf } from "../../program.js";
+import { heldEnvWriteDiag } from "../../../diagnostics/diagnostic.js";
 import { pairsSnapshotHelper } from "../pairs-snapshot.js";
 import {
   DYN,
@@ -47,6 +48,111 @@ export function isProcessEnv(lowerer: Lowerer, node: ts.Expression): boolean {
   return (
     ts.isPropertyAccessExpression(node) && lowerer.stdlibGlobalMember(node, "process") === "env"
   );
+}
+
+/** Whether `node` is the ambient `process.env` object, or a value HELD from
+ * it through a chain of bindings: `const env = process.env`, `const alias =
+ * env`, or the destructured `const { env } = process`. Node's held value IS
+ * the environment object. Here the binding holds a snapshot record of it:
+ * MEMBER accesses (`env.X`, `env[k]`, their writes, `delete env.X`) reroute
+ * to the live table (see heldEnvValueType), and every BARE use re-snapshots
+ * the environment at that use (see lowerIdentifierExpr), so both observe
+ * the environment as Node's single object would. */
+export function holdsEnvSnapshot(
+  lowerer: Lowerer,
+  node: ts.Expression | undefined,
+  depth = 0,
+): boolean {
+  if (node === undefined) return false;
+  let inner: ts.Expression = node;
+  for (;;) {
+    if (
+      ts.isParenthesizedExpression(inner) ||
+      ts.isAsExpression(inner) ||
+      ts.isNonNullExpression(inner) ||
+      ts.isSatisfiesExpression(inner)
+    ) {
+      inner = inner.expression;
+      continue;
+    }
+    break;
+  }
+  if (isProcessEnv(lowerer, inner)) return true;
+  if (!ts.isIdentifier(inner) || depth >= 4) return false;
+  const symbol = lowerer.checker.getSymbolAtLocation(inner);
+  const decl = symbol?.valueDeclaration ?? symbol?.declarations[0];
+  if (decl === undefined) return false;
+  // `const env = process.env` (or an identifier alias of one). The symbol's
+  // value declaration is the `const` itself; the written identifier here is
+  // a different node than the declared name, so no node identity check.
+  if (ts.isVariableDeclaration(decl)) {
+    return holdsEnvSnapshot(lowerer, decl.initializer, depth + 1);
+  }
+  // `const { env } = process` (also `{ env: held }`).
+  if (ts.isBindingElement(decl) && ts.isObjectBindingPattern(decl.parent)) {
+    const declaration = decl.parent.parent;
+    const named = decl.propertyName ?? decl.name;
+    if (
+      ts.isVariableDeclaration(declaration) &&
+      ts.isIdentifier(named) &&
+      named.text === "env" &&
+      declaration.initializer !== undefined
+    ) {
+      return lowerer.isStdlibGlobal(declaration.initializer, "process");
+    }
+  }
+  return false;
+}
+
+/** The receiver expression of a write target — the assignment's or delete's
+ * access (`env.X`, `env[k]`), through any compound/update wrapping. Null for
+ * targets that write no entry of a receiver. */
+function writeTargetReceiver(node: ts.Node): ts.Expression | null {
+  if (ts.isBinaryExpression(node)) return writeTargetReceiver(node.left);
+  if (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) {
+    return writeTargetReceiver(node.operand);
+  }
+  if (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) {
+    return node.expression;
+  }
+  return null;
+}
+
+/** Whether a MEMBER access (`env.X`, `env[k]`, and their writes) through a
+ * value HELD from `process.env` can go to the live environment table: the
+ * held binding's type must be exactly the env snapshot record (a pure
+ * index-signature shape whose value slot is `string | undefined`, what
+ * `process.env` maps to). Returns that value type, or null — a hold whose
+ * type differs keeps the snapshot record for reads and refuses writes (see
+ * refuseHeldEnvWrite). Member accesses alias the live table the way Node's
+ * do. A BARE use of the held value (a spread source, Object.keys, an
+ * argument, a return) is not a member access and takes a fresh snapshot of
+ * the environment at that use site (lowerIdentifierExpr). */
+export function heldEnvValueType(lowerer: Lowerer, receiver: ts.Expression): IrType | null {
+  if (!holdsEnvSnapshot(lowerer, receiver)) return null;
+  const mapped = lowerer.mapTypeOf(lowerer.typeOf(receiver));
+  if (mapped?.kind !== "record") return null;
+  const shape = lowerer.shapes.get(mapped.shapeId);
+  if (!shape || shape.tuple || shape.fields.length > 0 || shape.indexValue === undefined)
+    return null;
+  const value = lowerer.envValueType();
+  return typeEquals(shape.indexValue, value) ? value : null;
+}
+
+/** Refuse a write through a value HELD from `process.env` that cannot take
+ * the live path: the compound and update forms (`env.X += v`, `env.X++`)
+ * reach this wrapper, and so does any write through a hold whose type is
+ * not the env record. The held value is a snapshot record, so such a write
+ * would land on the copy while the real environment kept its old value;
+ * Node writes setenv(3) through the very same object, so a program relying
+ * on it would silently diverge. Plain `=`, computed-key and `delete` writes
+ * through the env record alias the live table instead (lower-stmts.ts,
+ * element-access.ts); `target` is the write's or delete's access node. */
+export function refuseHeldEnvWrite(lowerer: Lowerer, target: ts.Node): void {
+  const receiver = writeTargetReceiver(target);
+  if (receiver === null || !holdsEnvSnapshot(lowerer, receiver)) return;
+  lowerer.pushDiag(heldEnvWriteDiag(locOf(target)));
+  throw new PoisonError();
 }
 
 /** The interned `string | undefined` union — the type every env read

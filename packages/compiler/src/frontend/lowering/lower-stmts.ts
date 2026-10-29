@@ -45,6 +45,7 @@ import { isWebStreamValueInJavaScript, typeInvolvesWebStream } from "./builtins/
 import * as ts from "../ts7/adapter.js";
 import { lowerOptionalIndex } from "./undefined-index.js";
 import { processDataMemberValue, programReadsExitCode } from "./builtins/process.js";
+import { heldEnvValueType } from "./builtins/environment.js";
 import { requireInitFlagStmt } from "./require-initialization.js";
 import { isJsonRequireDecl } from "./json-require.js";
 import { isTimeValueDateDeclaration } from "./date-values.js";
@@ -7764,9 +7765,11 @@ function lowerDeleteStatement(lowerer: Lowerer, expr: ts.DeleteExpression): IrSt
       return { kind: "strLit", value: target.name.text, type: STRING, loc: locOf(target.name) };
     }
     const keyNode = (target as ts.ElementAccessExpression).argumentExpression;
-    let key = lowerer.isProcessEnv(target.expression)
-      ? lowerEnvironmentKey(lowerer, keyNode)
-      : lowerer.lowerExpr(keyNode);
+    let key =
+      lowerer.isProcessEnv(target.expression) ||
+      heldEnvValueType(lowerer, target.expression) !== null
+        ? lowerEnvironmentKey(lowerer, keyNode)
+        : lowerer.lowerExpr(keyNode);
     if (key.type.kind === "dyn") {
       key = { kind: "libCall", fn: "dyn.toStringCoerce", args: [key], type: STRING, loc: key.loc };
     }
@@ -7782,7 +7785,10 @@ function lowerDeleteStatement(lowerer: Lowerer, expr: ts.DeleteExpression): IrSt
     }
     return key;
   };
-  if (lowerer.isProcessEnv(target.expression)) {
+  if (
+    lowerer.isProcessEnv(target.expression) ||
+    heldEnvValueType(lowerer, target.expression) !== null
+  ) {
     return {
       kind: "exprStmt",
       expr: { kind: "libCall", fn: "process.envUnset", args: [lowerKey()], type: VOID, loc },
@@ -8710,7 +8716,14 @@ export function lowerExprStatement(lowerer: Lowerer, expr: ts.Expression): IrStm
         // (Node stringifies everything; a non-string RHS fences instead
         // of diverging from Node). The computed-key form lands in
         // lowerElementWrite.
-        if (lowerer.isProcessEnv(expr.left.expression) && !expr.left.questionDotToken) {
+        // The same setenv for a value HELD from process.env (`const env =
+        // process.env; env.X = v`): the hold aliases the live table, as
+        // Node's does.
+        if (
+          !expr.left.questionDotToken &&
+          (lowerer.isProcessEnv(expr.left.expression) ||
+            heldEnvValueType(lowerer, expr.left.expression) !== null)
+        ) {
           const loc = locOf(expr);
           const key: IrExpr = {
             kind: "strLit",
