@@ -60,6 +60,7 @@ if [ "$(git rev-parse "$TAG^{commit}")" != "$BASE_SHA" ] && [ -n "$(git diff --s
   exit 1
 fi
 echo "== base $BASE ($(git rev-parse --short "$BASE_SHA"))"
+echo "== upstream/main $(git log -1 --format='%h %s' upstream/main) ($(git rev-list --count "$BASE_SHA..upstream/main") commits past the base)"
 echo "== node $(node --version) (tests want .node-version's 24.22.0)"
 
 TSC_TS_TAG=$(git show "$BASE_SHA:packages/compiler/package.json" | sed -n 's/.*"tsc-ts": "\([^"]*\)".*/\1/p')

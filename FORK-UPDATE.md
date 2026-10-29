@@ -20,7 +20,7 @@ Drop a patch from `PATCHES` in `refork.sh` when the preflight or FORK.md's reche
 ./refork.sh --no-build
 ```
 
-Resolve each conflict, `git rebase --continue`, and rerun the same command until every branch and `light-integration` are rebuilt. Fix the patch branches while they are being touched: snapshots that intentionally change, `pnpm format`, and `pnpm lint` failures belong in the patch commit or a small follow-up on that branch, not in a later build cycle.
+Resolve each conflict, `git rebase --continue`, and rerun the same command until every branch and `light-integration` are rebuilt. Fix the patch branches while they are being touched: snapshots that intentionally change, `pnpm format`, and `pnpm lint` failures belong in the patch commit or a small follow-up on that branch, not in a later build cycle. Edit `fork-docs` or a patch branch, never `light-integration` directly: refork rewrites that branch and would leave the edit behind on `light-integration-prev`.
 
 Check the focused programs against the published base when the answer is not obvious; `scriptc@<version>` in a scratch directory is faster than a source build.
 
