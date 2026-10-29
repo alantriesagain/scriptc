@@ -3531,9 +3531,12 @@ void scr_fs_write_file(ScrStr *path, ScrStr *data) {
   scr_fs_write_common(path, data, "wb");
 }
 
-/* Node's mode validation for the options-record write: an integer in
- * open(2)'s mode_t range. Throws ERR_OUT_OF_RANGE and answers false. */
-static bool scr_fs_write_mode_ok(double mode) {
+/* writeFileSync(p, data, { mode }): the mode is open(2)'s O_CREAT
+ * argument — it applies at CREATION only (umask applying), and an
+ * existing file keeps its permissions, exactly Node (which never chmods
+ * here). Same error shapes as the plain form. */
+void scr_fs_write_file_mode(ScrStr *path, ScrStr *data, double mode) {
+  if (!scr_fs_path_ok(path, "path")) return;
   char recv[48], msg[176];
   scr_num_received(mode, recv);
   if (!(isfinite(mode) && trunc(mode) == mode)) {
@@ -3541,27 +3544,18 @@ static bool scr_fs_write_mode_ok(double mode) {
                        "The value of \"mode\" is out of range. It must be an integer. Received %s",
                        recv);
     scr_throw_error_msg_code(SCR_ERR_RANGE, msg, (size_t)len, "ERR_OUT_OF_RANGE");
-    return false;
+    return;
   }
   if (mode < 0 || mode > 4294967295.0) {
     int len = snprintf(msg, sizeof msg,
                        "The value of \"mode\" is out of range. It must be >= 0 && <= 4294967295. Received %s",
                        recv);
     scr_throw_error_msg_code(SCR_ERR_RANGE, msg, (size_t)len, "ERR_OUT_OF_RANGE");
-    return false;
+    return;
   }
-  return true;
-}
-
-/* The open(2) write behind the mode/flag forms: O_TRUNC plus `extra` (only
- * O_EXCL today), creation mode applying at CREATION only (umask applying) —
- * an existing file keeps its permissions, exactly Node (which never chmods
- * here). Same error shapes as the plain form. */
-static void scr_fs_write_file_open(ScrStr *path, ScrStr *data, mode_t mode, int extra) {
-  if (!scr_fs_path_ok(path, "path")) return;
   /* O_BINARY: zero on POSIX; on Windows it keeps the CRT from translating
    * \n in these byte-exact writes (fopen's "wb" path already does). */
-  int fd = open(path->data, O_WRONLY | O_CREAT | O_TRUNC | O_BINARY | extra, mode);
+  int fd = open(path->data, O_WRONLY | O_CREAT | O_TRUNC | O_BINARY, (mode_t)mode);
   if (fd < 0) {
     scr_fs_throw(errno, "open", path);
     return;
@@ -3583,22 +3577,6 @@ static void scr_fs_write_file_open(ScrStr *path, ScrStr *data, mode_t mode, int 
   }
   scr_str_utf8_end(owned);
   if (close(fd) != 0) scr_fs_throw(errno, "close", path);
-}
-
-/* writeFileSync(p, data, { mode }). */
-void scr_fs_write_file_mode(ScrStr *path, ScrStr *data, double mode) {
-  if (!scr_fs_path_ok(path, "path")) return;
-  if (!scr_fs_write_mode_ok(mode)) return;
-  scr_fs_write_file_open(path, data, (mode_t)mode, 0);
-}
-
-/* writeFileSync(p, data, { mode, flag }): Node's open(2) with the
- * disposition flag. `exclusive` is "wx" (O_EXCL: EEXIST when the path
- * exists); 0 is "w", the default truncate-or-create. */
-void scr_fs_write_file_flags(ScrStr *path, ScrStr *data, double mode, double exclusive) {
-  if (!scr_fs_path_ok(path, "path")) return;
-  if (!scr_fs_write_mode_ok(mode)) return;
-  scr_fs_write_file_open(path, data, (mode_t)mode, exclusive != 0 ? O_EXCL : 0);
 }
 
 void scr_fs_append_file(ScrStr *path, ScrStr *data) {
@@ -4693,6 +4671,12 @@ static bool scr_fs_win_same_file(const WCHAR *a, const WCHAR *b) {
          first.nFileIndexHigh == second.nFileIndexHigh &&
          first.nFileIndexLow == second.nFileIndexLow;
 }
+
+/* The Win32 arm of copyFile's mode form (scr_fs_cp.c's SCR_FS_FLAGS build
+ * has the POSIX one; writeFile's flag form is portable and lives in
+ * scr_fs_flags.c). It sits here because the wide-path and errno helpers
+ * above are this file's; _WIN32 excludes it from the POSIX builds, so every
+ * other platform's scr_lib.c object is unchanged. */
 
 /* copyFileSync(src, dest, mode) and copyFile(src, dest, mode): libuv's
  * fs__copyfile in src/win/fs.c. CopyFileW carries only COPYFILE_EXCL (its

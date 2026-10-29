@@ -341,11 +341,7 @@ static bool scr_rej_check_listener(ScrDyn *fn) {
   return false;
 }
 
-/* The registration body: `prepend` puts the listener in FRONT of the
- * registry's existing entries (process.prependListener — Node's
- * EventEmitter order), the plain form appends. */
-static void scr_rej_push_at(ScrRejListener **list, size_t *n, size_t *cap, ScrDyn *fn, bool once,
-                            bool prepend) {
+static void scr_rej_push(ScrRejListener **list, size_t *n, size_t *cap, ScrDyn *fn, bool once) {
   if (*n == *cap) {
     *cap = *cap ? *cap * 2 : 4;
     *list = realloc(*list, *cap * sizeof **list);
@@ -354,18 +350,7 @@ static void scr_rej_push_at(ScrRejListener **list, size_t *n, size_t *cap, ScrDy
   ScrRejState *state = calloc(1, sizeof *state);
   if (!state) scr_ad_oom();
   state->refs = 1;
-  ScrRejListener entry = (ScrRejListener){scr_dyn_retain(fn), once, ++scr_rej_id, state};
-  if (prepend) {
-    memmove(*list + 1, *list, *n * sizeof **list);
-    (*list)[0] = entry;
-    (*n)++;
-  } else {
-    (*list)[(*n)++] = entry;
-  }
-}
-
-static void scr_rej_push(ScrRejListener **list, size_t *n, size_t *cap, ScrDyn *fn, bool once) {
-  scr_rej_push_at(list, n, cap, fn, once, false);
+  (*list)[(*n)++] = (ScrRejListener){scr_dyn_retain(fn), once, ++scr_rej_id, state};
 }
 
 static void scr_rej_remove(ScrRejListener *list, size_t *n, ScrDyn *fn) {
@@ -482,32 +467,32 @@ static void scr_uncaught_teardown(void) {
   scr_uncaught_sync_hook();
 }
 
-/* Arm the registry's exit-time teardown once, whichever entry point
- * registers first. */
-static void scr_uncaught_arm(void) {
-  static SCR_TL bool armed = false;
-  if (armed) return;
-  armed = true;
-  scr_atexit(scr_uncaught_teardown);
-}
-
 void scr_process_on_uncaught_exception(ScrDyn *fn, bool once, bool monitor) {
   if (!scr_rej_check_listener(fn)) return;
-  scr_uncaught_arm();
+  static SCR_TL bool armed = false;
+  if (!armed) { armed = true; scr_atexit(scr_uncaught_teardown); }
   size_t k = monitor ? 1 : 0;
   scr_rej_push(&scr_uncaught_ls[k], &scr_uncaught_n[k], &scr_uncaught_cap[k], fn, once);
   scr_uncaught_sync_hook();
 }
 
+#ifdef SCR_PROCESS_EXTRAS
 /* process.prependListener("uncaughtException"[Monitor], fn): the same
- * listener in front of the registry's existing entries. */
+ * listener in FRONT of the registry's existing entries (Node's
+ * EventEmitter order). The append path above registers it and the new entry
+ * then moves to the front, so the two share one registration; a refused
+ * listener (a non-function) left the list alone and nothing moves. */
 void scr_process_prepend_uncaught_exception(ScrDyn *fn, bool monitor) {
-  if (!scr_rej_check_listener(fn)) return;
-  scr_uncaught_arm();
   size_t k = monitor ? 1 : 0;
-  scr_rej_push_at(&scr_uncaught_ls[k], &scr_uncaught_n[k], &scr_uncaught_cap[k], fn, false, true);
-  scr_uncaught_sync_hook();
+  size_t before = scr_uncaught_n[k];
+  scr_process_on_uncaught_exception(fn, false, monitor);
+  if (scr_uncaught_n[k] != before + 1) return;
+  ScrRejListener entry = scr_uncaught_ls[k][scr_uncaught_n[k] - 1];
+  memmove(scr_uncaught_ls[k] + 1, scr_uncaught_ls[k],
+          (scr_uncaught_n[k] - 1) * sizeof *scr_uncaught_ls[k]);
+  scr_uncaught_ls[k][0] = entry;
 }
+#endif
 
 void scr_process_off_uncaught_exception(ScrDyn *fn, bool monitor) {
   if (!scr_rej_check_listener(fn)) return;

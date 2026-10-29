@@ -153,6 +153,11 @@ const RUNTIME_UNITS: readonly RuntimeUnit[] = [
   ),
   unit((u) => u.opts.copying, "scr_copying.c"),
   unit((u) => u.opts.fileHandle, "scr_file_handle.c"),
+  // writeFile's `flag` option and the fs/promises twins; the copyFile mode
+  // argument is the SCR_FS_FLAGS build of scr_fs_cp.c.
+  unit((u) => u.opts.fsFlags === true, "scr_fs_flags.c"),
+  // string_decoder's checked-dynamic chunk forms, beside their typed twins.
+  unit((u) => u.opts.strdecDyn === true, "scr_bytes_strdec_dyn.c"),
   // win32 targets compile the libc-shim TU (stpcpy, arc4random_buf,
   // gmtime_r, strcasestr — the _WIN32 block in scr_runtime.h declares
   // them) and link advapi32 (the CSPRNG RtlGenRandom/SystemFunction036,
@@ -412,6 +417,13 @@ const RUNTIME_DEFINES: readonly {
   { define: "SCR_JS_TIER", when: (opts) => opts.dynTier === true },
   { define: "SCR_WARNING_REPLACE", when: (opts) => opts.warningReplace },
   { define: "SCR_STDIO_EXTENDED", when: (opts) => opts.stdioExtended },
+  // The wave's prepend registrations and stdin.isRaw (scr_events.c,
+  // scr_async_dyn.c), server.off (scr_net.c) and copyFile's mode form
+  // (scr_fs_cp.c). The source build compiles these units from source, so the
+  // defines must name the same builds runtime-pack-matrix.mjs selects.
+  { define: "SCR_PROCESS_EXTRAS", when: (opts) => opts.processExtras },
+  { define: "SCR_NET_SERVER_OFF", when: (opts) => opts.processExtras },
+  { define: "SCR_FS_FLAGS", when: (opts) => opts.fsFlags },
   // scr_async.c's native promise reactions, which the web streams unit uses,
   // scr_json.c's and scr_dyn_builtin_class.c's instanceof over its classes,
   // and scr_fetch.c's bodies of its streams.

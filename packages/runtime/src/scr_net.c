@@ -2438,9 +2438,12 @@ void scr_net_server_on_close(ScrNetServer *s, ScrClosure *cb /*moves*/, bool onc
   scr_net_ls_add(&s->close_ls, cb, NULL, once);
 }
 
+#ifdef SCR_NET_SERVER_OFF
 /* server.off(event, cb) / removeListener: the LAST listener standing for
  * the same function leaves the event's list — Node's EventEmitter removes
- * the most recently added match, so the scan runs back to front. */
+ * the most recently added match, so the scan runs back to front. The
+ * SCR_NET_SERVER_OFF build of the unit carries it, so a program that never
+ * removes a listener keeps the default object byte for byte. */
 void scr_net_server_off(ScrNetServer *s, ScrClosure *cb /*borrowed*/, double kind) {
   ScrNetLs *l = kind == SCR_NET_OFF_ERROR      ? &s->err_ls
                 : kind == SCR_NET_OFF_CLOSE    ? &s->close_ls
@@ -2461,6 +2464,7 @@ void scr_net_server_off(ScrNetServer *s, ScrClosure *cb /*borrowed*/, double kin
     return;
   }
 }
+#endif
 
 /* server.on('listening', cb): joins the deferred 'listening' list the
  * listen(port, cb) callback rides (the sweep fires it once after a
