@@ -40,9 +40,9 @@ export function recordSourceTest(value: IrExpr, loc: SrcLoc): IrExpr {
   return { kind: "libCall", fn: "record.sourceHas", args: [value], type: BOOL, loc };
 }
 
-/** A union revisited while it is being visited answers as if its cycle arm
- * were empty (`keeps: false`), so the caller's answer is incomplete until the
- * outer union settles. `cycled` marks that incompleteness: such an answer is
+/** A union or record revisited while it is being visited answers as if its
+ * cycle member were empty (`keeps: false`), so the caller's answer is
+ * incomplete until the outer one settles. `cycled` marks that incompleteness: such an answer is
  * never memoized, because another entry point into the same cycle could reach
  * the missing arm. */
 interface KeepsSourceAnswer {
@@ -50,8 +50,8 @@ interface KeepsSourceAnswer {
   cycled: boolean;
 }
 
-/** Shared work list of the whole-program scan: settled union answers, and the
- * unions on the current path. */
+/** Shared work list of the whole-program scan: settled union and record
+ * answers, and the unions and records on the current path, by id. */
 export interface KeepsSourceScan {
   memo: Map<string, boolean>;
   visiting: Set<string>;
@@ -59,33 +59,47 @@ export interface KeepsSourceScan {
 
 /** Whether a checked conversion into `target` can leave a record holding
  * undeclared source keys. The conversion reads one record at a time, so the
- * records nested in a union arm, a promise, or an array count too. */
+ * records nested in a union arm, a promise, an array, a record field or an
+ * index signature's values count too (`Record<string, { x: string }>` keeps
+ * the sources of its closed values). Unions and records are memoized by id;
+ * one revisited on the current path answers `cycled`. */
 function conversionKeepsSource(
   lowerer: Lowerer,
   target: IrType,
   scan: KeepsSourceScan,
 ): KeepsSourceAnswer {
-  if (target.kind === "record")
-    return { keeps: recordMayKeepSource(lowerer, target), cycled: false };
   if (target.kind === "promise") return conversionKeepsSource(lowerer, target.inner, scan);
   if (target.kind === "array") return conversionKeepsSource(lowerer, target.elem, scan);
-  if (target.kind !== "union") return { keeps: false, cycled: false };
-  const known = scan.memo.get(target.unionId);
+  if (target.kind === "record" && recordMayKeepSource(lowerer, target))
+    return { keeps: true, cycled: false };
+  let id: string;
+  let members: IrType[];
+  if (target.kind === "union") {
+    id = target.unionId;
+    members = lowerer.unions.get(target.unionId)?.arms ?? [];
+  } else if (target.kind === "record") {
+    id = target.shapeId;
+    const shape = lowerer.shapes.get(target.shapeId);
+    members = [
+      ...(shape?.fields.map((field) => field.type) ?? []),
+      ...(shape?.indexValue !== undefined ? [shape.indexValue] : []),
+    ];
+  } else return { keeps: false, cycled: false };
+  const known = scan.memo.get(id);
   if (known !== undefined) return { keeps: known, cycled: false };
-  if (scan.visiting.has(target.unionId)) return { keeps: false, cycled: true };
-  const union = lowerer.unions.get(target.unionId);
-  if (union === undefined) return { keeps: false, cycled: false };
-  scan.visiting.add(target.unionId);
+  if (scan.visiting.has(id)) return { keeps: false, cycled: true };
+  scan.visiting.add(id);
   let keeps = false;
   let cycled = false;
-  for (const arm of union.arms) {
-    const answer = conversionKeepsSource(lowerer, arm, scan);
+  for (const member of members) {
+    const answer = conversionKeepsSource(lowerer, member, scan);
     keeps = keeps || answer.keeps;
     cycled = cycled || answer.cycled;
+    if (keeps) break;
   }
-  scan.visiting.delete(target.unionId);
-  if (!cycled) scan.memo.set(target.unionId, keeps);
-  return { keeps, cycled };
+  scan.visiting.delete(id);
+  if (!cycled || keeps) scan.memo.set(id, keeps);
+  return { keeps, cycled: cycled && !keeps };
 }
 
 /** Whether `fn` holds a validated conversion that can note a record source:
