@@ -1302,7 +1302,21 @@ export function lowerObjectLiteral(
     lowerer.unsupported("SC1090", deferredConditionalSpread, CONDITIONAL_SPREAD_FENCE);
   }
   if (!mapped || mapped.kind !== "record") lowerer.badType(expr, tsType);
-  let type: IrType = mapped;
+  // An enclosing literal that built at its OWN type (its context had no
+  // layout) asks for the matching own layout of this nested literal. When
+  // this literal's contextual layout cannot reach that slot, build at it:
+  // the enclosing literal's coercion then decides, and the width lifts
+  // (the index-signature overflow capture included) carry the whole tree
+  // into the real destination. Otherwise the two layers disagree and the
+  // SC2002 names the source literal's own type as the expected one.
+  const layout: IrType & { kind: "record" } =
+    expected &&
+    !typeEquals(mapped, expected) &&
+    lowerer.widthLiftPlan(mapped, expected) === null &&
+    typeEquals(lowerer.mapTypeOf(lowerer.typeOf(expr)) ?? mapped, expected)
+      ? expected
+      : mapped;
+  let type: IrType = layout;
   // A fresh, plain literal can construct its fields directly for a known
   // destination with the same field set. This matters for inferred
   // conditional records: an empty array in one arm has no element layout
