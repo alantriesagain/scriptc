@@ -4677,6 +4677,9 @@ export class Lowerer {
       fixed("errorAccessorReflection", () => this.errorAccessorReflection),
       fixed("subclassLinks", () => this.subclassLinks),
       fixed("errorPathCopies", () => this.errorPathCopies),
+      // A latch of the end-of-lowering audit (checkGenericIdentityPins): a
+      // unit never touches it.
+      fixed("genericIdentityCheckDone", () => this.genericIdentityCheckDone),
       fixed("errorMethodDispatchRevision", () => this.errorMethodDispatchRevision),
       fixed("errorPropertyDispatchRevision", () => this.errorPropertyDispatchRevision),
       fixed("childAdditions", () => this.childAdditions),
