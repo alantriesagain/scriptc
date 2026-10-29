@@ -40,7 +40,7 @@ report('flat', Array.prototype.flat.call(nested, 1).join(''));
 report('flat-deep', Array.prototype.flat.call(nested, 2).join(''));
 report('flatMap', Array.prototype.flatMap.call(nested, (value) => [value, value]).length);
 
-// Holes and absent indexes stay holes.
+// toReversed defines every index on its result, so a hole becomes undefined.
 const sparse = { length: 3, 0: 'a', 2: 'c' };
 const copied = Array.prototype.toReversed.call(sparse);
 report('holes', '1' in copied ? 'present' : 'absent');
@@ -68,5 +68,85 @@ attempt('undefined-fill', () => Array.prototype.fill.call(undefined, 0));
 attempt('null-toReversed', () => Array.prototype.toReversed.call(null));
 attempt('undefined-with', () => Array.prototype.with.call(undefined, 0, 1));
 attempt('null-splice', () => Array.prototype.splice.call(null, 0, 1));
+
+// A proxy over `target` that logs its string-keyed reads and its has checks.
+const traced = (target) => {
+  const log = [];
+  const proxy = new Proxy(target, {
+    get(object, key, receiver) {
+      if (typeof key === 'string') log.push('get:' + key);
+      return Reflect.get(object, key, receiver);
+    },
+    has(object, key) {
+      log.push('has:' + String(key));
+      return Reflect.has(object, key);
+    },
+  });
+  return { proxy, log };
+};
+// concat appends a receiver that is not spreadable as one value, without
+// reading its length.
+const unread = traced({ length: 2, 0: 'a', 1: 'b' });
+const joined = Array.prototype.concat.call(unread.proxy, [1]);
+report('concat-length', joined.length);
+report('concat-reads', unread.log.join(','));
+
+// flatMap calls the callback with thisArg as `this`.
+const tagged = { length: 2, 0: 'a', 1: 'b' };
+report('flatMap-this', Array.prototype.flatMap.call(tagged, function (value) {
+  return [value, this.tag];
+}, { tag: 't' }).join(''));
+
+// A string's ToObject wrapper has read-only indexes below its length and a
+// read-only length, so the mutating methods throw on them.
+attempt('string-push', () => Array.prototype.push.call('ab', 'c'));
+attempt('string-pop', () => Array.prototype.pop.call('ab'));
+attempt('string-pop-empty', () => Array.prototype.pop.call(''));
+attempt('string-shift', () => Array.prototype.shift.call('ab'));
+attempt('string-unshift', () => Array.prototype.unshift.call('ab', 'x'));
+attempt('string-unshift-none', () => Array.prototype.unshift.call('ab'));
+attempt('string-reverse', () => Array.prototype.reverse.call('ab'));
+attempt('string-fill', () => Array.prototype.fill.call('ab', 'x'));
+attempt('string-copyWithin', () => Array.prototype.copyWithin.call('abc', 0, 1));
+attempt('string-splice', () => Array.prototype.splice.call('abc', 1, 1));
+attempt('string-splice-insert', () => Array.prototype.splice.call('', 0, 0, 'x'));
+attempt('string-splice-none', () => Array.prototype.splice.call('abc'));
+// Other primitives' wrappers carry no indexes and a writable length.
+attempt('number-push', () => Array.prototype.push.call(5, 'x'));
+attempt('boolean-pop', () => Array.prototype.pop.call(true));
+
+// toReversed reads with Get alone, from the last index down.
+const backwards = traced({ length: 3, 0: 'a', 2: 'c' });
+report('toReversed', JSON.stringify(Array.prototype.toReversed.call(backwards.proxy)));
+report('toReversed-reads', backwards.log.join(','));
+
+// with never reads the replaced index, and reads every other one with Get.
+const replaced = traced({ length: 3, 0: 'a', 2: 'c' });
+report('with', JSON.stringify(Array.prototype.with.call(replaced.proxy, 0, 'z')));
+report('with-reads', replaced.log.join(','));
+
+// toSorted reads every index with Get, holes included.
+const sorted = traced({ length: 3, 0: 'b', 2: 'a' });
+report('toSorted', JSON.stringify(Array.prototype.toSorted.call(sorted.proxy)));
+report('toSorted-reads', sorted.log.join(','));
+
+// toSpliced without arguments copies the receiver; a missing index becomes
+// an own undefined, read with Get alone.
+const copiedOut = traced({ length: 3, 0: 'a', 2: 'c' });
+const copy = Array.prototype.toSpliced.call(copiedOut.proxy);
+report('toSpliced-none', JSON.stringify(copy) + ' ' + ('1' in copy));
+report('toSpliced-none-reads', copiedOut.log.join(','));
+const skipped = traced({ length: 4, 0: 'a', 3: 'd' });
+report('toSpliced-holes', JSON.stringify(Array.prototype.toSpliced.call(skipped.proxy, 1, 1, 'X')));
+report('toSpliced-reads', skipped.log.join(','));
+
+// An array receiver held as an untyped value runs the array methods.
+const either = (useArray) => (useArray ? ['p', 'q'] : { length: 0 });
+const list = either(resolved.length > 0);
+report('array-push', Array.prototype.push.call(list, 'r'));
+report('array-reverse', Array.prototype.join.call(Array.prototype.reverse.call(list), ''));
+report('array-concat', Array.prototype.concat.call(list, ['s'], 't').join(''));
+report('array-toSpliced', Array.prototype.toSpliced.call(list, 0, 1).join(''));
+report('array-with', Array.prototype.with.call(list, 0, 'z').join(''));
 
 console.log(resolved.join('\n'));

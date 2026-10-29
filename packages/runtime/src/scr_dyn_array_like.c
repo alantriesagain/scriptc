@@ -171,8 +171,8 @@ static ScrDyn *al_item(ScrDyn *recv, size_t index) {
 }
 
 /* A primitive receiver's ToObject wrapper is fresh and unobservable: the
- * generic array algorithms read through it and discard their writes, which
- * is exactly what a wrapper nobody holds observes. */
+ * generic array algorithms read through it, and a write the wrapper accepts
+ * is discarded with it. */
 static bool al_primitive(const ScrDyn *recv) {
   switch (recv->kind) {
     case SCR_DYN_BOOL:
@@ -186,10 +186,49 @@ static bool al_primitive(const ScrDyn *recv) {
   }
 }
 
+/* The "not supported yet" Error for a method whose result would be a
+ * primitive receiver's wrapper object. */
+static void al_refuse_primitive(const ScrStr *method) {
+  ScrJsonBuf b;
+  scr_jb_init(&b);
+  scr_jb_puts(&b, "Array.prototype.");
+  scr_jb_write(&b, method->data, method->len);
+  scr_jb_puts(&b, " on a primitive receiver is not supported yet");
+  scr_throw_error(SCR_ERR_ERROR, scr_jb_finish(&b));
+}
+
+/* A String wrapper's indexes below its UTF-16 length are read-only and
+ * non-configurable, so Set throws on them and DeletePropertyOrThrow does
+ * too; an index at or past the length is an ordinary property of the
+ * wrapper. Number, boolean, bigint and symbol wrappers carry no index. */
+static bool al_string_index(const ScrDyn *recv, size_t index) {
+  return recv->kind == SCR_DYN_STR && (double)index < scr_str_utf16_len(recv->v.str);
+}
+
+/* V8's TypeError for a write or delete the String wrapper refuses; `key`
+ * is the property's name. */
+static void al_string_refuse(const char *key, bool deleting) {
+  ScrJsonBuf b;
+  scr_jb_init(&b);
+  scr_jb_puts(&b, deleting ? "Cannot delete property '" : "Cannot assign to read only property '");
+  scr_jb_puts(&b, key);
+  scr_jb_puts(&b, deleting ? "' of [object String]" : "' of object '[object String]'");
+  scr_throw_error(SCR_ERR_TYPE, scr_jb_finish(&b));
+}
+
+static void al_string_refuse_index(size_t index, bool deleting) {
+  char text[32];
+  snprintf(text, sizeof text, "%zu", index);
+  al_string_refuse(text, deleting);
+}
+
 /* Set(O, index, value, true): a failing write throws from scr_dyn_key_set
  * and the caller checks scr_exc_pending(). */
 static void al_set(ScrDyn *recv, size_t index, ScrDyn *value) {
-  if (al_primitive(recv)) return;
+  if (al_primitive(recv)) {
+    if (al_string_index(recv, index)) al_string_refuse_index(index, false);
+    return;
+  }
   ScrStr *key = al_key(index);
   scr_dyn_key_set(recv, key, value);
   scr_str_release(key);
@@ -197,15 +236,22 @@ static void al_set(ScrDyn *recv, size_t index, ScrDyn *value) {
 
 /* DeletePropertyOrThrow(O, index). */
 static void al_delete(ScrDyn *recv, size_t index) {
-  if (al_primitive(recv)) return;
+  if (al_primitive(recv)) {
+    if (al_string_index(recv, index)) al_string_refuse_index(index, true);
+    return;
+  }
   ScrStr *key = al_key(index);
   scr_dyn_key_delete(recv, key, true);
   scr_str_release(key);
 }
 
-/* Set(O, "length", length, true). */
+/* Set(O, "length", length, true). A String wrapper's length is read-only
+ * whatever the value. */
 static void al_set_length(ScrDyn *recv, size_t length) {
-  if (al_primitive(recv)) return;
+  if (al_primitive(recv)) {
+    if (recv->kind == SCR_DYN_STR) al_string_refuse("length", false);
+    return;
+  }
   ScrStr *key = scr_str_new("length", 6);
   ScrDyn *value = scr_dyn_new_num((double)length);
   scr_dyn_key_set(recv, key, value);
@@ -213,20 +259,25 @@ static void al_set_length(ScrDyn *recv, size_t length) {
   scr_str_release(key);
 }
 
-/* The receiver's elements in index order as a fresh dyn array. Every index
- * the receiver does not carry becomes undefined, as toReversed, toSorted
- * and with create their result with CreateDataProperty for every index.
- * Owned (+1), NULL with the exception pending. */
-static ScrDyn *al_snapshot(ScrDyn *recv, size_t len) {
+/* fill, copyWithin and reverse return O, which for a primitive receiver is
+ * its ToObject wrapper. A compiled program has no wrapper object to return,
+ * so for a primitive the method throws the "not supported yet" Error. */
+static ScrDyn *al_receiver_result(ScrDyn *recv, const ScrStr *method) {
+  if (!al_primitive(recv)) return scr_dyn_retain(recv);
+  al_refuse_primitive(method);
+  return NULL;
+}
+
+/* The receiver's elements in index order as a fresh dyn array, each read
+ * with Get alone (an index the receiver does not carry reads undefined), as
+ * toSorted and with read through holes; the element at `skip` (SIZE_MAX:
+ * none) is `replacement` and is never read. Owned (+1), NULL with the
+ * exception pending. */
+static ScrDyn *al_snapshot(ScrDyn *recv, size_t len, size_t skip, ScrDyn *replacement) {
   ScrDyn *out = scr_dyn_new_arr();
   for (size_t i = 0; i < len; i++) {
     if (len > 1000000 && !al_iteration(i)) { scr_dyn_release(out); return NULL; }
-    if (!al_present(recv, i)) {
-      if (scr_exc_pending()) { scr_dyn_release(out); return NULL; }
-      scr_dyn_arr_push(out, scr_dyn_retain(scr_dyn_undefined()));
-      continue;
-    }
-    ScrDyn *item = al_item(recv, i);
+    ScrDyn *item = i == skip ? scr_dyn_retain(replacement) : al_item(recv, i);
     if (!item) { scr_dyn_release(out); return NULL; }
     scr_dyn_arr_push(out, item);
   }
@@ -272,12 +323,32 @@ static bool al_cb_check(ScrDyn *const *args, size_t argc) {
   return false;
 }
 
+/* The methods this unit runs; every other name is the invoke unit's. */
+static bool al_owns(const ScrStr *method) {
+  static const char *const names[] = {
+    "concat", "copyWithin", "fill", "flat", "flatMap", "join", "pop", "push", "reverse",
+    "shift", "splice", "toReversed", "toSorted", "toSpliced", "unshift", "with",
+  };
+  for (size_t i = 0; i < sizeof names / sizeof names[0]; i++)
+    if (al_is(method, names[i])) return true;
+  return false;
+}
+
 /* One packed argument list, borrowed: the array dispatch hands the
  * algorithm its arguments as a dyn array. */
 ScrDyn *scr_dyn_array_like_call(ScrDyn *recv, ScrStr *method, ScrDyn *args) {
   if (recv->kind == SCR_DYN_ARR ||
-      (recv->kind == SCR_DYN_TYPED_REF && scr_dyn_typed_ref_array_ops(recv)))
+      (recv->kind == SCR_DYN_TYPED_REF && scr_dyn_typed_ref_array_ops(recv))) {
+    /* An array receiver runs this unit's methods through the array
+     * dispatch, which implements each of them for arrays. */
+    char name[16];
+    if (al_owns(method) && args && args->kind == SCR_DYN_ARR) {
+      memcpy(name, method->data, method->len);
+      name[method->len] = '\0';
+      return scr_dyn_invoke(recv, name, args->v.arr.items, args->v.arr.len, name);
+    }
     return scr_dyn_array_proto_call(recv, method, args);
+  }
   /* Step 1 of each of these algorithms: `? ToObject(this value)`. The
    * array dispatch answers it for its own receivers; a nullish one never
    * reaches a length read. */
@@ -289,6 +360,19 @@ ScrDyn *scr_dyn_array_like_call(ScrDyn *recv, ScrStr *method, ScrDyn *args) {
   if (!args || args->kind != SCR_DYN_ARR) scr_trap("scriptc: invalid Array.prototype arguments\n");
   ScrDyn *const *argv = args->v.arr.items;
   size_t argc = args->v.arr.len;
+  if (al_is(method, "concat")) {
+    /* A receiver that is not an array is not spreadable: it is the result's
+     * first element, and its length is never read. The arguments then
+     * spread as they do for an array receiver, so the array dispatch
+     * answers `[receiver].concat(...args)`. A primitive receiver's first
+     * element would be its wrapper object. */
+    if (al_primitive(recv)) { al_refuse_primitive(method); return NULL; }
+    ScrDyn *head = scr_dyn_new_arr();
+    scr_dyn_arr_push(head, scr_dyn_retain(recv));
+    ScrDyn *out = scr_dyn_invoke(head, "concat", argv, argc, "concat");
+    scr_dyn_release(head);
+    return out;
+  }
   size_t len;
   if (!al_length(recv, &len)) return NULL;
 
@@ -394,7 +478,7 @@ ScrDyn *scr_dyn_array_like_call(ScrDyn *recv, ScrStr *method, ScrDyn *args) {
       scr_dyn_release(upper_value);
       if (scr_exc_pending()) return NULL;
     }
-    return scr_dyn_retain(recv);
+    return al_receiver_result(recv, method);
   }
   if (al_is(method, "join")) {
     ScrStr *sep = argc > 0 && argv[0]->kind != SCR_DYN_UNDEF
@@ -441,7 +525,7 @@ ScrDyn *scr_dyn_array_like_call(ScrDyn *recv, ScrStr *method, ScrDyn *args) {
       al_set(recv, i, value);
       if (scr_exc_pending()) return NULL;
     }
-    return scr_dyn_retain(recv);
+    return al_receiver_result(recv, method);
   }
   if (al_is(method, "copyWithin")) {
     double target_d = 0;
@@ -453,7 +537,7 @@ ScrDyn *scr_dyn_array_like_call(ScrDyn *recv, ScrStr *method, ScrDyn *args) {
     size_t to = al_rel_index(trunc(target_d), len);
     size_t from = al_rel_index(trunc(start_d), len);
     size_t end = al_rel_index(trunc(end_d), len);
-    if (from >= end || to >= len) return scr_dyn_retain(recv);
+    if (from >= end || to >= len) return al_receiver_result(recv, method);
     size_t count = end - from < len - to ? end - from : len - to;
     bool backwards = from < to && to < from + count;
     for (size_t step = 0; step < count; step++) {
@@ -470,31 +554,7 @@ ScrDyn *scr_dyn_array_like_call(ScrDyn *recv, ScrStr *method, ScrDyn *args) {
       }
       if (scr_exc_pending()) return NULL;
     }
-    return scr_dyn_retain(recv);
-  }
-  if (al_is(method, "concat")) {
-    /* The receiver's own elements spread one level when it is a native
-     * array; an array-like receiver is appended as a single value, as
-     * Array.prototype.concat treats a non-array `this`. */
-    ScrDyn *out = scr_dyn_new_arr();
-    if (recv->kind == SCR_DYN_ARR) {
-      for (size_t i = 0; i < len; i++)
-        if (!al_copy_item(out, recv, i)) { scr_dyn_release(out); return NULL; }
-    } else {
-      scr_dyn_arr_push(out, scr_dyn_retain(recv));
-    }
-    /* An array argument spreads one level (holes included); every other
-     * value is appended as itself. */
-    for (size_t a = 0; a < argc; a++) {
-      ScrDyn *arg = argv[a];
-      if (arg->kind != SCR_DYN_ARR) {
-        scr_dyn_arr_push(out, scr_dyn_retain(arg));
-        continue;
-      }
-      for (size_t i = 0; i < arg->v.arr.len; i++)
-        if (!al_copy_item(out, arg, i)) { scr_dyn_release(out); return NULL; }
-    }
-    return out;
+    return al_receiver_result(recv, method);
   }
   if (al_is(method, "splice")) {
     /* No arguments is the one form whose actualStart is len, not 0: it
@@ -576,18 +636,19 @@ ScrDyn *scr_dyn_array_like_call(ScrDyn *recv, ScrStr *method, ScrDyn *args) {
       scr_throw_error_msg(SCR_ERR_RANGE, msg, sizeof msg - 1);
       return NULL;
     }
-    ScrDyn *out = al_snapshot(recv, len);
-    if (!out) return NULL;
-    al_set(out, (size_t)index, argc > 1 ? argv[1] : scr_dyn_undefined());
-    if (scr_exc_pending()) { scr_dyn_release(out); return NULL; }
-    return out;
+    return al_snapshot(recv, len, (size_t)index, argc > 1 ? argv[1] : scr_dyn_undefined());
   }
   if (al_is(method, "toReversed")) {
-    ScrDyn *out = al_snapshot(recv, len);
-    if (!out) return NULL;
-    ScrDyn *reversed = scr_dyn_invoke(out, "reverse", NULL, 0, "toReversed");
-    scr_dyn_release(out);
-    return reversed;
+    /* Get(O, len - k - 1) for k ascending: the reads go from the last
+     * index down. */
+    ScrDyn *out = scr_dyn_new_arr();
+    for (size_t k = 0; k < len; k++) {
+      if (len > 1000000 && !al_iteration(k)) { scr_dyn_release(out); return NULL; }
+      ScrDyn *item = al_item(recv, len - k - 1);
+      if (!item) { scr_dyn_release(out); return NULL; }
+      scr_dyn_arr_push(out, item);
+    }
+    return out;
   }
   if (al_is(method, "toSorted")) {
     ScrDyn *cmp = argc > 0 ? argv[0] : scr_dyn_undefined();
@@ -596,7 +657,7 @@ ScrDyn *scr_dyn_array_like_call(ScrDyn *recv, ScrStr *method, ScrDyn *args) {
       scr_throw_error_msg(SCR_ERR_TYPE, msg, sizeof msg - 1);
       return NULL;
     }
-    ScrDyn *out = al_snapshot(recv, len);
+    ScrDyn *out = al_snapshot(recv, len, SIZE_MAX, NULL);
     if (!out) return NULL;
     if (out->v.arr.len < 2) return out;
     ScrDyn *sorted = scr_dyn_invoke(out, "sort", argv, argc, "toSorted");
@@ -607,7 +668,8 @@ ScrDyn *scr_dyn_array_like_call(ScrDyn *recv, ScrStr *method, ScrDyn *args) {
     double start_d = 0;
     if (argc > 0 && !al_number(argv[0], &start_d)) return NULL;
     size_t start = al_rel_index(trunc(start_d), len);
-    size_t removed = len - start;
+    /* Without `start` nothing is skipped: the result is a copy. */
+    size_t removed = argc > 0 ? len - start : 0;
     if (argc > 1) {
       double count_d = 0;
       if (!al_number(argv[1], &count_d)) return NULL;
@@ -629,15 +691,21 @@ ScrDyn *scr_dyn_array_like_call(ScrDyn *recv, ScrStr *method, ScrDyn *args) {
       scr_throw_error_msg(SCR_ERR_RANGE, msg, sizeof msg - 1);
       return NULL;
     }
+    /* Every copied index is read with Get and defined on the result, so a
+     * missing one becomes an own undefined, not a hole. */
     ScrDyn *out = scr_dyn_new_arr();
     for (size_t i = 0; i < start; i++) {
       if (len > 1000000 && !al_iteration(i)) { scr_dyn_release(out); return NULL; }
-      if (!al_copy_item(out, recv, i)) { scr_dyn_release(out); return NULL; }
+      ScrDyn *item = al_item(recv, i);
+      if (!item) { scr_dyn_release(out); return NULL; }
+      scr_dyn_arr_push(out, item);
     }
     for (size_t j = 2; j < argc; j++) scr_dyn_arr_push(out, scr_dyn_retain(argv[j]));
     for (size_t i = start + removed; i < len; i++) {
       if (len > 1000000 && !al_iteration(i)) { scr_dyn_release(out); return NULL; }
-      if (!al_copy_item(out, recv, i)) { scr_dyn_release(out); return NULL; }
+      ScrDyn *item = al_item(recv, i);
+      if (!item) { scr_dyn_release(out); return NULL; }
+      scr_dyn_arr_push(out, item);
     }
     return out;
   }
@@ -661,7 +729,9 @@ ScrDyn *scr_dyn_array_like_call(ScrDyn *recv, ScrStr *method, ScrDyn *args) {
       if (mapping) {
         ScrDyn *index = scr_dyn_new_num((double)i);
         ScrDyn *cbargs[3] = { item, index, recv };
+        scr_dyn_this_push_dyn(argc > 1 ? argv[1] : scr_dyn_undefined());
         ScrDyn *result = scr_dyn_call(argv[0], cbargs, 3, "callback");
+        scr_dyn_this_pop();
         scr_dyn_release(index);
         scr_dyn_release(item);
         if (!result) { scr_dyn_release(mapped); return NULL; }
