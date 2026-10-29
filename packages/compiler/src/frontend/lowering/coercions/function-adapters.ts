@@ -126,11 +126,20 @@ export function cleanFuncAdaptable(
   if (restPackingAdapterFits(lowerer, src, dst)) return true;
   if (src.rest === true || dst.rest === true) return false;
   if (src.params.length > dst.params.length) return false;
+  // Checked mode (a method field's adapter, WidthLift funcAdaptChecked):
+  // parameters and results may also take the record width conversions,
+  // checked retags included.
+  const checked = lowerer.coercions.checkedRetags > 0;
   for (let i = 0; i < src.params.length; i++) {
-    if (!lowerer.coercibleValue(dst.params[i]!, src.params[i]!)) return false;
+    if (
+      !lowerer.coercibleValue(dst.params[i]!, src.params[i]!) &&
+      !(checked && lowerer.widthLiftPlan(dst.params[i]!, src.params[i]!) !== null)
+    )
+      return false;
   }
   if (dst.ret.kind === "void") return true;
   if (lowerer.coercibleValue(src.ret, dst.ret)) return true;
+  if (checked && lowerer.widthLiftPlan(src.ret, dst.ret) !== null) return true;
   return src.ret.kind === "void" && dst.ret.kind === "dyn";
 }
 
@@ -390,7 +399,7 @@ export function funcCoerceAdapter(
     strandRet = false;
   // A record result the slot's result is a structural width of.
   if (strandRet && lowerer.widthLiftPlan(fromT.ret, toT.ret)) strandRet = false;
-  const key = `fnadapt:${typeKey(fromT)}:${typeKey(toT)}`;
+  const key = `fnadapt:${typeKey(fromT)}:${typeKey(toT)}${lowerer.coercions.checkedRetags > 0 ? ":checked" : ""}`;
   const existing = lowerer.coercions.retags.get(key);
   if (existing) return existing;
   const name = keyedHelperName(lowerer, "%fn.adapt", key);
