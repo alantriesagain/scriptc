@@ -1331,6 +1331,19 @@ export function lowerGenericInstance(
   }
 }
 
+/** Records that `instance` is one of `info`'s value instances (see
+ * `valueInstances`). Written as its own statements rather than
+ * `(x ??= new Set()).add(...)`: the self-hosted frontend fences a Set method
+ * call on a non-Set receiver, and this compiler compiles its own source. */
+function noteValueInstance(info: GenericFnInfo, instance: string): void {
+  let instances = info.valueInstances;
+  if (instances === undefined) {
+    instances = new Set<string>();
+    info.valueInstances = instances;
+  }
+  instances.add(instance);
+}
+
 /** A generic function taken as a VALUE, monomorphized by flow. A function
  * value needs ONE concrete signature; tsc pins one at exactly two
  * reference shapes — an instantiation EXPRESSION (`identity<number>`,
@@ -1355,7 +1368,7 @@ export function lowerGenericFnValue(
   // closure per function, so `f === f` holds like any declaration).
   if (info.implicitParams) {
     const inst = implicitDefaultInstance(lowerer, ref, info);
-    (info.valueInstances ??= new Set()).add(inst.name);
+    noteValueInstance(info, inst.name);
     const funcType: IrType = funcTypeFromParamShapes(inst.params, inst.returnType);
     lowerer.requireExactArityValue(ref, ref, inst.params, funcType);
     lowerer.noteEdge(inst.name);
@@ -1559,7 +1572,7 @@ function pinnedGenericClosure(
   // nothing: mapType answers null for an unsubstituted parameter.
   if (info.typeParams.some((tp) => !bindings.get(tp))) fenceUnpinned();
   const inst = genericValueInstance(lowerer, ref, info, bindings);
-  (info.valueInstances ??= new Set()).add(inst.name);
+  noteValueInstance(info, inst.name);
   // The value's type is the completed ABI signature. Typed rest keeps its
   // packed-array slot; dynRest stays hidden behind the rest marker.
   const funcType: IrType = funcTypeFromParamShapes(inst.params, inst.returnType);
@@ -1609,7 +1622,7 @@ export function erasedGenericInstance(
       new Map(info.typeParams.map((tp) => [tp, DYN])),
     );
     instance.erased = true;
-    (info.valueInstances ??= new Set()).add(instance.name);
+    noteValueInstance(info, instance.name);
     return instance;
   } finally {
     lowerer.erasingDepth--;
