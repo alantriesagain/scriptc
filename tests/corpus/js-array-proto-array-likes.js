@@ -79,7 +79,7 @@ const traced = (target) => {
     },
     has(object, key) {
       log.push('has:' + String(key));
-      return Reflect.has(object, key);
+      return key in object;
     },
   });
   return { proxy, log };
@@ -148,5 +148,40 @@ report('array-reverse', Array.prototype.join.call(Array.prototype.reverse.call(l
 report('array-concat', Array.prototype.concat.call(list, ['s'], 't').join(''));
 report('array-toSpliced', Array.prototype.toSpliced.call(list, 0, 1).join(''));
 report('array-with', Array.prototype.with.call(list, 0, 'z').join(''));
+
+// join reads every index with Get alone; a has trap never runs.
+const joinedLog = traced({ length: 3, 0: 'a', 2: 'c' });
+report('join', Array.prototype.join.call(joinedLog.proxy, '-'));
+report('join-reads', joinedLog.log.join(','));
+const hidden = new Proxy({ length: 2, 0: 'x', 1: 'y' }, { has() { throw new Error('has trap'); } });
+report('join-has-trap', Array.prototype.join.call(hidden, ''));
+
+// flat converts its depth before it reads any index.
+const order = [];
+const depthSource = { length: 2, get 0() { order.push('read 0'); return [1, [2]]; }, 1: 3 };
+const depth = { valueOf() { order.push('depth'); return 2; } };
+report('flat-depth', JSON.stringify(Array.prototype.flat.call(depthSource, depth)));
+report('flat-order', order.join(','));
+const failing = { length: 1, get 0() { order.push('never'); return 1; } };
+try {
+  Array.prototype.flat.call(failing, { valueOf() { throw new Error('depth failed'); } });
+} catch (error) {
+  report('flat-depth-throws', error.message + ' ' + order.includes('never'));
+}
+
+// flatMap flattens each callback's result before the next callback runs.
+const shared = [1, 2];
+const mapped = Array.prototype.flatMap.call({ length: 2, 0: 'a', 1: 'b' }, (value) => {
+  if (value === 'a') return shared;
+  shared[0] = 9;
+  return [];
+});
+report('flatMap-order', JSON.stringify(mapped));
+// flat also flattens a nested array when its index is read.
+const nestedArray = [1, 2];
+const nestedSource = { length: 2, 0: nestedArray, get 1() { nestedArray[0] = 9; return 3; } };
+report('flat-nested-order', JSON.stringify(Array.prototype.flat.call(nestedSource)));
+report('flat-negative', JSON.stringify(Array.prototype.flat.call({ length: 1, 0: [1, [2]] }, -1)));
+report('flat-infinity', JSON.stringify(Array.prototype.flat.call({ length: 1, 0: [1, [2, [3]]] }, Infinity)));
 
 console.log(resolved.join('\n'));

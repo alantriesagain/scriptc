@@ -485,17 +485,18 @@ ScrDyn *scr_dyn_array_like_call(ScrDyn *recv, ScrStr *method, ScrDyn *args) {
       ? scr_dyn_string_coerce_js(argv[0])
       : scr_str_new(",", 1);
     if (!sep) return NULL;
+    /* Get alone at each index: a missing index reads undefined, which
+     * joins as the empty string. */
     ScrJsonBuf buffer;
     scr_jb_init(&buffer);
     for (size_t i = 0; i < len; i++) {
       if (i) scr_jb_write(&buffer, sep->data, sep->len);
-      if (len > 1000000 && !al_iteration(i)) { scr_str_release(sep); return NULL; }
-      if (!al_present(recv, i)) {
-        if (scr_exc_pending()) { scr_str_release(sep); return NULL; }
-        continue;
+      ScrDyn *item = len > 1000000 && !al_iteration(i) ? NULL : al_item(recv, i);
+      if (!item) {
+        scr_str_release(scr_jb_finish(&buffer));
+        scr_str_release(sep);
+        return NULL;
       }
-      ScrDyn *item = al_item(recv, i);
-      if (!item) { scr_str_release(sep); return NULL; }
       if (item->kind != SCR_DYN_UNDEF && item->kind != SCR_DYN_NULL) {
         ScrStr *text = scr_dyn_string_coerce_js(item);
         if (text) {
@@ -504,7 +505,11 @@ ScrDyn *scr_dyn_array_like_call(ScrDyn *recv, ScrStr *method, ScrDyn *args) {
         }
       }
       scr_dyn_release(item);
-      if (scr_exc_pending()) { scr_str_release(sep); return NULL; }
+      if (scr_exc_pending()) {
+        scr_str_release(scr_jb_finish(&buffer));
+        scr_str_release(sep);
+        return NULL;
+      }
     }
     scr_str_release(sep);
     ScrStr *text = scr_jb_finish(&buffer);
@@ -710,22 +715,30 @@ ScrDyn *scr_dyn_array_like_call(ScrDyn *recv, ScrStr *method, ScrDyn *args) {
     return out;
   }
   if (al_is(method, "flat") || al_is(method, "flatMap")) {
-    /* Snapshot the receiver into a native array the array dispatch
-     * flattens: the flattening rules (depth counting, nested arrays and
-     * wrapped array views) live in one implementation. flatMap maps first,
-     * then flattens the mapped array at depth 1. */
+    /* FlattenIntoArray: after the length, flat converts its depth and
+     * flatMap checks its callback. Then each present index is read and,
+     * for flatMap, mapped, and its value is flattened into the result
+     * before the next index is read. The array dispatch flattens each
+     * value as `[value].flat(depth)`, so the flattening rules (nested
+     * arrays and wrapped array views) keep one implementation. */
     bool mapping = al_is(method, "flatMap");
-    if (mapping && !al_cb_check(argv, argc)) return NULL;
-    ScrDyn *mapped = scr_dyn_new_arr();
+    double depth = 1;
+    if (mapping) {
+      if (!al_cb_check(argv, argc)) return NULL;
+    } else if (argc > 0 && argv[0]->kind != SCR_DYN_UNDEF) {
+      if (!al_number(argv[0], &depth)) return NULL;
+      if (depth < 0) depth = 0;
+    }
+    ScrDyn *depth_arg = scr_dyn_new_num(depth);
+    ScrDyn *out = scr_dyn_new_arr();
     for (size_t i = 0; i < len; i++) {
-      if (len > 1000000 && !al_iteration(i)) { scr_dyn_release(mapped); return NULL; }
+      if (len > 1000000 && !al_iteration(i)) goto flat_failed;
       if (!al_present(recv, i)) {
-        if (scr_exc_pending()) { scr_dyn_release(mapped); return NULL; }
-        scr_dyn_arr_push_hole(mapped);
+        if (scr_exc_pending()) goto flat_failed;
         continue;
       }
       ScrDyn *item = al_item(recv, i);
-      if (!item) { scr_dyn_release(mapped); return NULL; }
+      if (!item) goto flat_failed;
       if (mapping) {
         ScrDyn *index = scr_dyn_new_num((double)i);
         ScrDyn *cbargs[3] = { item, index, recv };
@@ -734,25 +747,24 @@ ScrDyn *scr_dyn_array_like_call(ScrDyn *recv, ScrStr *method, ScrDyn *args) {
         scr_dyn_this_pop();
         scr_dyn_release(index);
         scr_dyn_release(item);
-        if (!result) { scr_dyn_release(mapped); return NULL; }
+        if (!result) goto flat_failed;
         item = result;
       }
-      scr_dyn_arr_push(mapped, item);
+      ScrDyn *one = scr_dyn_new_arr();
+      scr_dyn_arr_push(one, item);
+      ScrDyn *flattened = scr_dyn_invoke(one, "flat", &depth_arg, 1, mapping ? "flatMap" : "flat");
+      scr_dyn_release(one);
+      if (!flattened) goto flat_failed;
+      for (size_t j = 0; j < flattened->v.arr.len; j++)
+        scr_dyn_arr_push(out, scr_dyn_retain(flattened->v.arr.items[j]));
+      scr_dyn_release(flattened);
     }
-    ScrDyn *one = scr_dyn_new_num(1);
-    ScrDyn *flatargs[1] = { one };
-    ScrDyn *out;
-    if (mapping) {
-      out = scr_dyn_invoke(mapped, "flat", flatargs, 1, "flatMap");
-    } else {
-      /* flat's own depth argument: absent, undefined or a number. */
-      ScrDyn *given[1] = { argc > 0 ? argv[0] : scr_dyn_undefined() };
-      size_t count = argc > 0 ? 1 : 0;
-      out = scr_dyn_invoke(mapped, "flat", given, count, "flat");
-    }
-    scr_dyn_release(one);
-    scr_dyn_release(mapped);
+    scr_dyn_release(depth_arg);
     return out;
+  flat_failed:
+    scr_dyn_release(depth_arg);
+    scr_dyn_release(out);
+    return NULL;
   }
   /* Every other name keeps the one implementation in the invoke unit
    * (at, slice, indexOf, the higher-order methods, and the "not supported
