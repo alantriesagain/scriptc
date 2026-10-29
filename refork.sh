@@ -95,6 +95,7 @@ const fs = require("node:fs");
 const cp = require("node:child_process");
 const root = process.argv[2];
 const name = process.argv[3];
+const base = name.split("/").pop();
 const files = cp
   .execFileSync("git", ["-C", root, "ls-files", "-z"], { encoding: "utf8" })
   .split("\0")
@@ -109,7 +110,7 @@ for (const file of files) {
   }
   for (const section of ["dependencies", "devDependencies", "peerDependencies", "optionalDependencies"]) {
     for (const [dep, spec] of Object.entries(pkg[section] ?? {})) {
-      if (spec === "workspace:*" && dep.toLowerCase().includes("light") && dep !== name)
+      if (spec === "workspace:*" && dep !== name && dep.split("/").pop() === base)
         out.add(file + ": " + dep);
     }
   }
