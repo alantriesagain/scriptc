@@ -208,14 +208,14 @@ export function lowerArrayLiteral(
     // []`, the `[]` default argument against `string[] | undefined`) has
     // no useful own type — tsc infers `never[]`, whose f64-element
     // mapping is a representation for the uninhabited, not the slot's
-    // arm. When the contextual union has exactly ONE array arm there is
-    // no ambiguity: build the literal as that arm and let the slot's
-    // coercion wrap it. Two array arms would need tsc's own best-fit
-    // choice — none arises in practice; the fence stands.
+    // arm. Build the literal as the union's FIRST array arm and let the
+    // slot's coercion wrap it: an empty array is the same value whichever
+    // array family stores it, so several array arms raise no ambiguity —
+    // the rule a lone array slot already states.
     if (ctxUnion && expr.elements.nodes.length === 0) {
       const def = lowerer.unions.get(ctxUnion.unionId);
       const arrayArms = def?.arms.filter((a) => a.kind === "array") ?? [];
-      if (arrayArms.length === 1) mapped = arrayArms[0]!;
+      if (arrayArms.length >= 1) mapped = arrayArms[0]!;
     }
     // A NON-EMPTY literal whose own type has no static home (the JS dyn
     // fallback — a null/dyn mapping, or an inference that degraded to a

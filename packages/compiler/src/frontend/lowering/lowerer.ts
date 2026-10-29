@@ -14044,6 +14044,15 @@ export class Lowerer {
             );
           }
         }
+        // An EMPTY literal carries no element to select an arm by: tsc
+        // infers `never[]`, whose f64-element mapping is the uninhabited
+        // element's representation, not one of the slot's arms. Every empty
+        // array is the same value whichever array arm stores it, so the
+        // literal is built as the union's FIRST array arm — the empty
+        // literal rule a lone array slot already states, and the same one
+        // the ternary arm and the `?? []` default apply.
+        if (!arm && arms.length > 1 && x.elements.nodes.length === 0)
+          arm = arms.find((candidate) => candidate.kind === "array");
         if (arm) {
           const built = this.lowerArrayLiteral(
             x,
