@@ -135,6 +135,7 @@ import {
 } from "./containers/indexed-objects.js";
 import { lowerTupleReadMethodCall } from "./containers/array-methods.js";
 import { tryFuseIndexRead } from "./array-values.js";
+import { isPrimitivePrototypeRead } from "./expressions/property-access.js";
 import {
   lowerBufferConstruct,
   lowerBytesPrototypeSetCall,
@@ -3954,6 +3955,12 @@ function lowerDynReceiverMethodCall(
   )
     recv = lowerer.coerceToExpected(recv, DYN);
   if (recv.type.kind !== "dyn") return null;
+  // `Number.prototype.m(...)` reads the prototype OBJECT, whose `m` is its
+  // own member, so every primitive specialization below — which assumes a
+  // primitive receiver and coerces the value it is given — would be wrong.
+  // The shared dispatch reads the member and calls it with the prototype as
+  // `this`, which is Node's answer for the wrapper around +0 / false.
+  const prototypeReceiver = isPrimitivePrototypeRead(lowerer, access.expression);
   if (
     access.name.text === "normalize" &&
     call.arguments.nodes.length <= 1 &&
@@ -4064,7 +4071,7 @@ function lowerDynReceiverMethodCall(
   // prototype declares (Array carries includes/indexOf/slice too), so no
   // other kind inherits them. Shared names would need a receiver-kind
   // dispatch — they keep the fence.
-  if (DYN_STRING_ONLY_METHODS.has(access.name.text) && !ownCallable) {
+  if (DYN_STRING_ONLY_METHODS.has(access.name.text) && !ownCallable && !prototypeReceiver) {
     // A checked-dynamic object can still carry its OWN member of that
     // name: zod's schemas assign `trim`, `toLowerCase` and `startsWith`
     // in their constructors (`z.string().trim().min(1)`), an object's
@@ -4094,6 +4101,7 @@ function lowerDynReceiverMethodCall(
   // runtime dispatch.
   if (
     !ownCallable &&
+    !prototypeReceiver &&
     !call.questionDotToken &&
     !access.questionDotToken &&
     isDynPrimitiveKindMethod(access.name.text) &&
@@ -4116,6 +4124,7 @@ function lowerDynReceiverMethodCall(
     access.name.text === "toString" &&
     call.arguments.nodes.length <= 1 &&
     !ownCallable &&
+    !prototypeReceiver &&
     !(checkerUntyped && jsAssignsOwnToString(lowerer, access.expression))
   ) {
     const argument = call.arguments.nodes[0];
@@ -4134,7 +4143,7 @@ function lowerDynReceiverMethodCall(
   // Every dyn kind's prototype chain declares valueOf, and the runtime
   // answers each kind's own: primitives and plain objects themselves, a
   // Date its time value, an own or inherited valueOf member its result.
-  if (access.name.text === "valueOf" && call.arguments.nodes.length === 0) {
+  if (access.name.text === "valueOf" && call.arguments.nodes.length === 0 && !prototypeReceiver) {
     const webAssembly = lowerWebAssemblyValueOf(lowerer, access.expression, recv, locOf(call));
     if (webAssembly !== null) return webAssembly;
     return {
