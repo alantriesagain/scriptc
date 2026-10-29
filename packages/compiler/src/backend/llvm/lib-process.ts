@@ -811,10 +811,19 @@ export function emitErrorsEventsLibCall(host: LlvmEmitterContext, e: LibCallExpr
     const kind = host.emitExpr(e.args[0]!);
     const code = host.emitExpr(e.args[1]!);
     const msg = host.emitExpr(e.args[2]!);
-    host.declare(`declare void @scr_throw_node_coded(double, ptr, ptr)`);
-    B.line(
-      `call void @scr_throw_node_coded(double ${kind.name}, ptr ${code.name}, ptr ${msg.name})`,
-    );
+    if (e.args.length > 3) {
+      // The fourth argument: the error's own `url` property.
+      const url = host.emitExpr(e.args[3]!);
+      host.declare(`declare void @scr_throw_node_coded_url(double, ptr, ptr, ptr)`);
+      B.line(
+        `call void @scr_throw_node_coded_url(double ${kind.name}, ptr ${code.name}, ptr ${msg.name}, ptr ${url.name})`,
+      );
+    } else {
+      host.declare(`declare void @scr_throw_node_coded(double, ptr, ptr)`);
+      B.line(
+        `call void @scr_throw_node_coded(double ${kind.name}, ptr ${code.name}, ptr ${msg.name})`,
+      );
+    }
     const ty = host.llType(e.type);
     if (ty === "void") {
       host.emitAlwaysPendingUnwind();

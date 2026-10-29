@@ -10709,6 +10709,20 @@ void scr_error_set_prop(ScrError *e, const char *key, size_t key_len, ScrDyn *va
   scr_dyn_release(view);
 }
 
+/* scr_throw_node_coded with Node's `url` own property: the
+ * ERR_MODULE_NOT_FOUND of an import() whose relative target does not
+ * exist carries the target's file URL. Borrows the strings; always throws
+ * (catchably — call sites are compiler-emitted pending checks). */
+void scr_throw_node_coded_url(double kind, const ScrStr *code, const ScrStr *msg, const ScrStr *url) {
+  ScrError *e = scr_error_new((int)kind, (ScrStr *)msg); /* borrowed in */
+  if (code->len > 0) {
+    scr_str_release(e->code); /* NULL-safe */
+    e->code = scr_str_retain((ScrStr *)code);
+  }
+  scr_error_set_prop(e, "url", 3, scr_dyn_new_str((ScrStr *)url));
+  scr_throw_obj(e, &scr_error_retain_v, &scr_error_release_v, scr_error_trace_arg());
+}
+
 /* The error's checked-dynamic node when it has one (borrowed), else NULL:
  * util.inspect reads its extra own properties. */
 ScrDyn *scr_errdyn_view_of(const ScrError *e) {

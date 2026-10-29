@@ -4189,9 +4189,17 @@ function validateFunction(
       e.fn === "readable.unpipe" ||
       e.fn === "rl.create" ||
       e.fn === "rl.createSignal";
-    if (variadic ? e.args.length < sig.argTypes.length : e.args.length !== sig.argTypes.length) {
+    // error.nodeThrow takes an optional fourth argument: the error's own
+    // `url` property (a string).
+    const optionalUrl = e.fn === "error.nodeThrow" && e.args.length === 4;
+    if (
+      variadic
+        ? e.args.length < sig.argTypes.length
+        : e.args.length !== sig.argTypes.length && !optionalUrl
+    ) {
       err(`libCall ${e.fn}: ${e.args.length} args, expected ${sig.argTypes.length}`, e.loc);
     }
+    if (optionalUrl) expectType(e.args[3]!, STRING, `libCall ${e.fn} arg 3`);
     e.args.forEach((a, i) => {
       checkExpr(a);
       const want = sig.argTypes[i];

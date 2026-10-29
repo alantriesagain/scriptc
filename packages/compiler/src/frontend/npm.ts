@@ -1,5 +1,6 @@
 /** Node package resolution shared by preflight and native module introspection. */
 import { dirname, join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { packageNameOfSpecifier as packageNameOf } from "./workspace-registry.js";
 import {
   trackedDirectoryExists,
@@ -140,6 +141,32 @@ export function probeNodeImportRefusal(
     }
     dir = parent;
   }
+}
+
+/** Node's import() refusal for a relative or absolute specifier whose
+ * target does not exist: ERR_MODULE_NOT_FOUND naming the resolved path, with
+ * its file URL. An existing file or directory answers null, as do other
+ * specifier forms. ESM resolution adds no extension, so the path is the
+ * specifier resolved against the importer's directory. */
+export function probeNodeFileImportRefusal(
+  fromFile: string,
+  specifier: string,
+  host: NpmGraphHost = realNpmGraphHost,
+): NodeImportRefusal | null {
+  const relative =
+    specifier.startsWith("./") ||
+    specifier.startsWith("../") ||
+    specifier === "." ||
+    specifier === "..";
+  if (!relative && !specifier.startsWith("/")) return null;
+  const importer = resolve(fromFile);
+  const target = resolve(dirname(importer), specifier);
+  if (host.isFile(target) || host.isDirectory(target)) return null;
+  return {
+    code: "ERR_MODULE_NOT_FOUND",
+    message: `Cannot find module '${target}' imported from ${importer}`,
+    url: pathToFileURL(target).href,
+  };
 }
 
 export function probeNodeRequireRefusal(

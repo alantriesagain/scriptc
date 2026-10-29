@@ -555,6 +555,9 @@ export interface StartupCrash {
   loc: { file: string; start: number; end: number };
   /** Node's error code, for the refusals that carry one. */
   code?: string;
+  /** The error's own `url` property: the missing file's URL, for Node's
+   * ERR_MODULE_NOT_FOUND of an import() whose target does not exist. */
+  url?: string;
 }
 
 /** True when a coverage mapping names one exact bare host module. TypeScript
