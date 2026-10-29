@@ -1322,9 +1322,8 @@ export function lowerObjectLiteral(
     // Distribute against the contextual union when there is one (its arms
     // carry the discriminants), else against the literal's own union.
     const ctx = lowerer.mapTypeOf(tsType);
-    const distributed = exact
-      ? null
-      : lowerDistributedUnionSpread(lowerer, expr, ctx?.kind === "union" ? ctx : mapped);
+    const unionCtx = ctx?.kind === "union" ? ctx : mapped;
+    const distributed = exact ? null : lowerDistributedUnionSpread(lowerer, expr, unionCtx);
     if (distributed) return distributed;
     // A spread merge over UNION-typed sources (`{ ...base, ...override }`
     // with `base`, `override` of arm-union types) has one field set per
@@ -1332,8 +1331,13 @@ export function lowerObjectLiteral(
     // No single arm of the contextual union can hold that value without
     // dropping the fields the other arms contributed (Node keeps them
     // all), and a runtime tag would be a guess about which arm the value
-    // "is". Refuse, naming the candidate arms.
+    // "is". Build the object Node builds instead — the checked-dynamic
+    // copy — and let the union's checked conversion validate it.
     if (mapped?.kind === "union") {
+      if (!exact && unionCtx?.kind === "union") {
+        const merged = lowerUnionSpreadMergeDyn(lowerer, expr, unionCtx);
+        if (merged) return merged;
+      }
       const members = tsType.isUnionType() ? ts.constituentTypes(tsType) : [tsType];
       const arms = [...new Set(members.map((m) => lowerer.checker.typeToString(m)))];
       lowerer.pushDiag(
@@ -2884,6 +2888,47 @@ function lowerDistributedUnionSpread(
     type: mapped,
     loc,
   };
+}
+
+/** `{ ...a, ...b }` over union-typed sources that lowerDistributedUnionSpread
+ * declined: no single destination arm holds every key the contributors may
+ * write (`provider-composer`'s two all-optional compat unions, an aggregate
+ * config merged from a http|stdio union plus a patch naming both). Node
+ * builds ONE plain object: each source's own enumerable keys copy in source
+ * order (later writers win), then the explicit fields write in their own
+ * positions. Build exactly that object — the checked-dynamic literal — and
+ * validate it into the declared union at the slot. The value keeps its
+ * runtime keys (reflection, JSON, and inspection see what Node sees); a
+ * value the union cannot hold throws the catchable TypeError at the
+ * conversion instead of being reinterpreted as one arm.
+ *
+ * Null when the shape is not the SC2003 one (no union-typed spread source),
+ * when the build must not demote (inside a capture buffer, or under
+ * `--tier=static-only`, which keeps today's refusal), or when the union has
+ * no checked extraction. The caller then keeps its refusal. */
+function lowerUnionSpreadMergeDyn(
+  lowerer: Lowerer,
+  expr: ts.ObjectLiteralExpression,
+  target: IrType & { kind: "union" },
+): IrExpr | null {
+  if (isJsSourceFile(ts.getSourceFileOfNode(expr))) return null;
+  const spreadsUnion = expr.properties.nodes.some((prop) => {
+    if (!ts.isSpreadAssignment(prop)) return false;
+    let node: ts.Expression = prop.expression;
+    while (ts.isParenthesizedExpression(node)) node = node.expression;
+    return lowerer.mapTypeOf(lowerer.typeOf(node))?.kind === "union";
+  });
+  if (!spreadsUnion) return null;
+  if (lowerer.tierMode !== "auto" || lowerer.diagSink !== null) return null;
+  if (
+    !canDynCheckTo(
+      target,
+      (id) => lowerer.shapes.get(id),
+      (id) => lowerer.unions.get(id),
+    )
+  )
+    return null;
+  return lowerer.coerceToExpected(lowerDynObjectLiteral(lowerer, expr), target);
 }
 
 /** A union of plain records can preserve its existing variant while
