@@ -132,11 +132,16 @@ export function lowerStringDecoderMethodCall(
     };
   }
   if (!(chunk.type.kind === "bytes" && chunk.type.elem === "u8")) {
-    lowerer.noLowering(
-      `StringDecoder.${name} of '${lowerer.fmt(chunk.type)}' data`,
-      node,
-      "pass a string or typed-array view (narrow unions first)",
-    );
+    // Any other value decides at run time, as Node's write does: a string
+    // passes through, an ArrayBufferView decodes, and anything else throws.
+    const op = name === "end" ? "endDyn" : "writeDyn";
+    return {
+      kind: "call",
+      callee: stringDecoderHelper(lowerer, op, receiver.type.shapeId, loc),
+      args: [receiver, lowerer.coerceInto(node, chunk, DYN)],
+      type: STRING,
+      loc,
+    };
   }
   const helper = stringDecoderHelper(
     lowerer,
@@ -153,13 +158,15 @@ export function lowerStringDecoderMethodCall(
  * the pure strdec.* libCalls. */
 function stringDecoderHelper(
   lowerer: Lowerer,
-  op: "write" | "end" | "endChunk" | "endString" | "writeString",
+  op: "write" | "end" | "endChunk" | "endString" | "writeString" | "writeDyn" | "endDyn",
   shapeId: string,
   loc: SrcLoc,
 ): string {
   const key = `strdec.${op}`;
   const existing = lowerer.valueHelpers.get(key);
   if (existing) return existing;
+  if (op === "writeDyn" || op === "endDyn")
+    return stringDecoderDynHelper(lowerer, op, key, shapeId, loc);
   const name = keyedHelperName(lowerer, `%strdec.${op}`, key);
   lowerer.valueHelpers.set(key, name);
   const recT: IrType = { kind: "record", shapeId };
@@ -303,6 +310,76 @@ function stringDecoderHelper(
     };
   }
   lowerer.liftedFns.push({ name, params, returnType: STRING, locals, body, loc });
+  return name;
+}
+
+/** The %strdec helpers of a chunk known only at run time (Node's write and
+ * end): a string passes through write unchanged, and end returns it
+ * followed by the flushed partial; an ArrayBufferView decodes as a u8 view
+ * of its bytes; end(undefined) only flushes; any other value throws
+ * ERR_INVALID_ARG_TYPE (strdec.view). */
+function stringDecoderDynHelper(
+  lowerer: Lowerer,
+  op: "writeDyn" | "endDyn",
+  key: string,
+  shapeId: string,
+  loc: SrcLoc,
+): string {
+  const name = keyedHelperName(lowerer, `%strdec.${op}`, key);
+  lowerer.valueHelpers.set(key, name);
+  const recT: IrType = { kind: "record", shapeId };
+  const d = (): IrExpr => varRef("d.0", recT, loc);
+  const chunk = (): IrExpr => varRef("chunk.0", DYN, loc);
+  const call = (helper: Parameters<typeof stringDecoderHelper>[1], args: IrExpr[]): IrExpr => ({
+    kind: "call",
+    callee: stringDecoderHelper(lowerer, helper, shapeId, loc),
+    args,
+    type: STRING,
+    loc,
+  });
+  const text: IrExpr = { kind: "dynCheck", value: chunk(), type: STRING, loc };
+  const view: IrExpr = { kind: "libCall", fn: "strdec.view", args: [chunk()], type: BYTES_U8, loc };
+  const isString: IrExpr = { kind: "dynTest", test: "string", value: chunk(), type: BOOL, loc };
+  const body: IrStmt[] = [];
+  if (op === "endDyn")
+    body.push({
+      kind: "if",
+      cond: { kind: "dynTest", test: "undefined", value: chunk(), type: BOOL, loc },
+      then: [{ kind: "return", value: call("end", [d()]), loc }],
+      else_: null,
+      loc,
+    });
+  body.push(
+    {
+      kind: "if",
+      cond: isString,
+      then: [
+        {
+          kind: "return",
+          value:
+            op === "endDyn" ? call("endString", [d(), text]) : call("writeString", [d(), text]),
+          loc,
+        },
+      ],
+      else_: null,
+      loc,
+    },
+    { kind: "return", value: call(op === "endDyn" ? "endChunk" : "write", [d(), view]), loc },
+  );
+  lowerer.liftedFns.push({
+    name,
+    params: [
+      { localId: "d.0", name: "d", type: recT },
+      { localId: "chunk.0", name: "chunk", type: DYN },
+    ],
+    returnType: STRING,
+    locals: [
+      { id: "d.0", name: "d", type: recT, mutable: false },
+      { id: "chunk.0", name: "chunk", type: DYN, mutable: false },
+    ],
+    body,
+    loc,
+  });
   return name;
 }
 

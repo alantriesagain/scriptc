@@ -192,6 +192,7 @@ ScrStr *scr_strdec_write(const ScrStr *enc, double pending, const ScrBytes *chun
 double scr_strdec_next(const ScrStr *enc, double pending, const ScrBytes *chunk);
 ScrStr *scr_strdec_end(const ScrStr *enc, double pending);
 ScrStr *scr_strdec_encoding(const ScrDyn *enc); /* +1, or NULL with ERR_UNKNOWN_ENCODING pending */
+ScrBytes *scr_strdec_view(const ScrDyn *value); /* +1, or NULL with ERR_INVALID_ARG_TYPE pending */
 /* A Buffer encoding name known only at run time, Node's getEncodingOps: the
  * canonical name of an encoding in any ASCII case (+1), or NULL with
  * ERR_UNKNOWN_ENCODING ("Unknown encoding: <raw>") pending. Borrows raw. */

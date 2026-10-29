@@ -1524,6 +1524,25 @@ static ScrStr *scr_strdec_step(const ScrStr *enc, double pending, const ScrBytes
   return s;
 }
 
+/* The bytes of a StringDecoder write(buf) or end(buf) input that is not a
+ * string: a u8 view of an ArrayBufferView's bytes. Any other value throws
+ * ERR_INVALID_ARG_TYPE for "buf", as Node's write does. */
+ScrBytes *scr_strdec_view(const ScrDyn *value) {
+  if (value->kind == SCR_DYN_TYPED_REF) {
+    ScrDyn *materialized = scr_dyn_typed_ref_materialize(value);
+    if (!materialized) return NULL;
+    ScrBytes *result = scr_strdec_view(materialized);
+    scr_dyn_release(materialized);
+    return result;
+  }
+  if (value->kind == SCR_DYN_BYTES) {
+    ScrBytes *bytes = value->v.bytes;
+    return scr_bytes_buffer_view(bytes, SCR_BYTES_U8, scr_bytes_byte_offset(bytes), true, scr_bytes_byte_len(bytes));
+  }
+  scr_dyn_arg_type_fail("buf", "an instance of Buffer, TypedArray, or DataView", value);
+  return NULL;
+}
+
 /* decoder.write(chunk): the decoded complete prefix (+1). */
 ScrStr *scr_strdec_write(const ScrStr *enc, double pending, const ScrBytes *chunk) {
   SCR_BYTES_SNAPSHOT(chunk);
@@ -2754,8 +2773,8 @@ ScrStr *scr_bytes_normalize_encoding(const ScrStr *raw) {
 /* new StringDecoder(encoding) with an encoding known only at run time:
  * Node's normalizeEncoding. undefined, null and "" are utf8; a Buffer
  * encoding name in any ASCII case answers its canonical name (+1); any
- * other string throws ERR_UNKNOWN_ENCODING (NULL). Encodings that are not
- * strings have no lowering. */
+ * other string throws ERR_UNKNOWN_ENCODING (NULL). Encodings that may not
+ * be strings go through scr_strdec_encoding_value (scr_inspect.c). */
 ScrStr *scr_strdec_encoding(const ScrDyn *enc) {
   if (enc->kind == SCR_DYN_UNDEF || enc->kind == SCR_DYN_NULL) return scr_str_new("utf8", 4);
   if (enc->kind != SCR_DYN_STR) {

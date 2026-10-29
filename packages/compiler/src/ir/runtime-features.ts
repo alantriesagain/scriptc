@@ -1119,6 +1119,8 @@ const RUNTIME_FEATURE_RULES = {
       "global.native",
       // ERR_ARG_NOT_ITERABLE renders the value as util.format's %s does.
       "webstream.class",
+      // ERR_UNKNOWN_ENCODING formats an encoding that is not a string with %s.
+      "strdec.encodingValue",
       "webstream.install",
       "util.styleText",
       "crypto.cipherNew",
