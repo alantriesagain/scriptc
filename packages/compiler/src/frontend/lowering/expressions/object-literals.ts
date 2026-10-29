@@ -549,8 +549,7 @@ function fenceAccessorSpreadSource(
 /** Only definitely present later records replace earlier defaults. A
  * callback binding may store undefined despite its checker annotation. */
 function laterSpreadType(lowerer: Lowerer, expr: ts.Expression): IrType | null {
-  let source = expr;
-  while (ts.isParenthesizedExpression(source)) source = source.expression;
+  const source = spreadSourceNode(lowerer, expr);
   if (ts.isIdentifier(source)) return lowerer.lowerExpr(source).type;
   return lowerer.mapTypeOf(lowerer.typeOf(source));
 }
@@ -1892,8 +1891,7 @@ export function lowerObjectLiteral(
       // earlier ones (JS last-write-wins). Evaluate the source exactly
       // once, including empty sources and those whose fields are all
       // overridden. Field snapshots above preserve the copy order.
-      let srcNode: ts.Expression = prop.expression;
-      while (ts.isParenthesizedExpression(srcNode)) srcNode = srcNode.expression;
+      const srcNode = spreadSourceNode(lowerer, prop.expression);
       const condRecord = conditionalRecordSpreadOf(lowerer, prop.expression);
       let srcLowered = capture(
         condRecord !== null
@@ -3022,14 +3020,51 @@ function lowerConditionalRecordSpread(
   };
 }
 
+/** A spread's source expression with parentheses stripped, seeing through
+ * an empty-object default: `...(x ?? {})` and `...(x || {})` spread exactly
+ * what `...x` spreads (a nullish or other falsy value is a primitive with
+ * no own keys, and x evaluates once either way). Only where `x` is a plain
+ * record or a record-or-unit union, which the field copy and the
+ * optional-spread desugar handle; index-signature and other sources keep
+ * their paths. */
+function spreadSourceNode(lowerer: Lowerer, expr: ts.Expression): ts.Expression {
+  let e: ts.Expression = expr;
+  while (ts.isParenthesizedExpression(e)) e = e.expression;
+  if (
+    !ts.isBinaryExpression(e) ||
+    (e.operatorToken.kind !== ts.SyntaxKind.QuestionQuestionToken &&
+      e.operatorToken.kind !== ts.SyntaxKind.BarBarToken)
+  )
+    return e;
+  let right: ts.Expression = e.right;
+  while (ts.isParenthesizedExpression(right)) right = right.expression;
+  if (!ts.isObjectLiteralExpression(right) || right.properties.nodes.length !== 0) return e;
+  let left: ts.Expression = e.left;
+  while (ts.isParenthesizedExpression(left)) left = left.expression;
+  const plainRecord = (t: IrType | undefined): boolean =>
+    t?.kind === "record" && lowerer.shapes.get(t.shapeId)?.indexValue === undefined;
+  const source = lowerer.mapTypeOf(lowerer.typeOf(left));
+  if (plainRecord(source ?? undefined)) return left;
+  if (source?.kind === "union") {
+    const arms = lowerer.unions.get(source.unionId)?.arms ?? [];
+    const records = arms.filter((arm) => arm.kind === "record");
+    if (
+      records.length === 1 &&
+      plainRecord(records[0]) &&
+      arms.every((arm) => arm.kind === "record" || isUnitType(arm))
+    )
+      return left;
+  }
+  return e;
+}
+
 /** A spread source the record desugar cannot enumerate: an untyped
  * (`unknown`) value, or one whose shape carries an index signature
  * (`Record<string, unknown>`, `{ [key: string]: T }`) so its keys are
  * runtime state. Node copies own enumerable keys in insertion order, which
  * the checked-dynamic object reproduces. */
 function dynSpreadSource(lowerer: Lowerer, node: ts.Expression): boolean {
-  let e: ts.Expression = node;
-  while (ts.isParenthesizedExpression(e)) e = e.expression;
+  const e = spreadSourceNode(lowerer, node);
   if ((lowerer.typeOf(e).flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0) return true;
   const indexed = (t: IrType | null): boolean => {
     if (t?.kind === "record") return lowerer.shapes.get(t.shapeId)?.indexValue !== undefined;
