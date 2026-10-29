@@ -604,6 +604,7 @@ function lowerFlexListenerCall(
   once: boolean,
   prepend: boolean,
   loc: SrcLoc,
+  anyName = false,
 ): IrExpr {
   if (receiver.type.kind !== "object") {
     lowerer.noLowering(
@@ -633,10 +634,19 @@ function lowerFlexListenerCall(
     lowerer.noLowering(`${member} with a non-function computed-name listener`, cbNode);
   }
   const recvT = receiver.type;
-  const key = `emitter.${registering ? "onFlex" : "offDyn"}:${typeKey(recvT)}`;
+  // An UNRESTRICTED name may be any event, including 'error', the meta
+  // events, and the literal events typed code fixes a tuple for: register
+  // through the checked-dynamic receiver's bridge (typed adapters for those
+  // events, the thunk alone otherwise), which keeps Node's contract for each.
+  if (anyName && registering) {
+    const bridged = lowerDynamicEmitterOn(lowerer, receiver, name, boxed, once, prepend, loc);
+    if (bridged) return bridged;
+  }
+  const onFn = anyName ? "onAny" : "onFlex";
+  const key = `emitter.${registering ? onFn : "offDyn"}:${typeKey(recvT)}`;
   let helper = lowerer.arrHofHelpers.get(key);
   if (!helper) {
-    helper = keyedHelperName(lowerer, `%emitter.${registering ? "onFlex" : "offFlex"}`, key);
+    helper = keyedHelperName(lowerer, `%emitter.${registering ? onFn : "offFlex"}`, key);
     lowerer.arrHofHelpers.set(key, helper);
     const params: IrParam[] = [
       { localId: "r.0", name: "r", type: recvT },
@@ -671,7 +681,7 @@ function lowerFlexListenerCall(
         kind: "return",
         value: {
           kind: "libCall",
-          fn: registering ? "emitter.onFlex" : "emitter.offDyn",
+          fn: registering ? (anyName ? "emitter.onAny" : "emitter.onFlex") : "emitter.offDyn",
           args: [
             varRef("r.0", recvT, loc),
             varRef("n.0", STRING, loc),
@@ -1309,7 +1319,7 @@ export function lowerEmitterMethodCall(
     }
     return receiver;
   };
-  const lowerFlexEmit = (name: IrExpr, kind = "computed-name"): IrExpr => {
+  const lowerFlexEmit = (name: IrExpr, kind = "computed-name", anyName = false): IrExpr => {
     const below: ClassInfo[] = [];
     collectEmitOverridesBelow(info, below);
     if (emitOverrideAtOrAbove(info) || below.length > 0) {
@@ -1328,6 +1338,20 @@ export function lowerEmitterMethodCall(
       );
     }
     const payload = args.slice(1).map((arg) => lowerer.lowerExprExpecting(arg, DYN));
+    if (anyName) {
+      // Any event name: the checked-dynamic receiver's emit, which keeps
+      // 'error' and the meta events' contracts and converts the arguments
+      // for listeners registered with a typed tuple.
+      return (
+        lowerDynamicEmitterEmit(lowerer, receiver, name, payload, loc) ?? {
+          kind: "libCall",
+          fn: "emitter.emitAny",
+          args: [receiver, name, ...payload],
+          type: BOOL,
+          loc,
+        }
+      );
+    }
     return {
       kind: "libCall",
       fn: "emitter.emitFlex",
@@ -1430,7 +1454,11 @@ export function lowerEmitterMethodCall(
     }
     const registering = REGISTER_MEMBERS.has(member);
     if (literalEventName(lowerer, args[0]!) === null) {
-      computedEventPattern(lowerer, info, member, args[0]!);
+      // An unrestricted name on a plain emitter takes the any-name path;
+      // streams keep the fence (their runtime events carry fixed ABIs).
+      const anyName =
+        computedEventPatternOf(lowerer, args[0]!) === null && streamSidesOf(lowerer, info) === null;
+      if (!anyName) computedEventPattern(lowerer, info, member, args[0]!);
       const receiver = lowerReceiver();
       const name = lowerer.lowerExprExpecting(args[0]!, STRING);
       return lowerFlexListenerCall(
@@ -1443,6 +1471,7 @@ export function lowerEmitterMethodCall(
         member === "once" || member === "prependOnceListener",
         member === "prependListener" || member === "prependOnceListener",
         loc,
+        anyName,
       );
     }
     const name = eventNameOf(lowerer, member, args[0]!);
@@ -1635,6 +1664,10 @@ export function lowerEmitterMethodCall(
           type: BOOL,
           loc,
         };
+      }
+      if (pattern === null && streamSidesOf(lowerer, info) === null) {
+        const name = lowerer.lowerExprExpecting(args[0]!, STRING);
+        return lowerFlexEmit(name, "computed-name", true);
       }
       computedEventPattern(lowerer, info, member, args[0]!);
       const name = lowerer.lowerExprExpecting(args[0]!, STRING);
