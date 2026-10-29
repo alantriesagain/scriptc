@@ -1,0 +1,17 @@
+held-env-copy-hold.ts:8:7 - error SC2014: a value held from process.env under a type other than the environment record (a string-keyed record of string | undefined) is not supported: the hold is a snapshot copy taken where it is created, so its reads would see the environment as it was then while Node reads the live environment
+
+  7 | // a fixed-field annotation: tsc admits it through the index signature
+  8 | const home: { HOME?: string } = process.env;
+    |       ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  9 | console.log(home.HOME);
+
+  hint: hold process.env without changing its type (const env = process.env), read the live table directly (process.env.NAME), or copy the entries you need: const env = { ...process.env, NAME: value }
+
+held-env-copy-hold.ts:12:7 - error SC2014: a value held from process.env under a type other than the environment record (a string-keyed record of string | undefined) is not supported: the hold is a snapshot copy taken where it is created, so its reads would see the environment as it was then while Node reads the live environment
+
+  11 | // an `any` hold: no record shape to alias through
+  12 | const anyEnv: any = process.env;
+     |       ^~~~~~~~~~~~~~~~~~~~~~~~~
+  13 | console.log(anyEnv.PATH);
+
+  hint: hold process.env without changing its type (const env = process.env), read the live table directly (process.env.NAME), or copy the entries you need: const env = { ...process.env, NAME: value }

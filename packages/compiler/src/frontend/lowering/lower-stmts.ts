@@ -45,7 +45,7 @@ import { isWebStreamValueInJavaScript, typeInvolvesWebStream } from "./builtins/
 import * as ts from "../ts7/adapter.js";
 import { lowerOptionalIndex } from "./undefined-index.js";
 import { processDataMemberValue, programReadsExitCode } from "./builtins/process.js";
-import { heldEnvValueType } from "./builtins/environment.js";
+import { heldEnvValueType, refuseHeldEnvCopyHold } from "./builtins/environment.js";
 import { requireInitFlagStmt } from "./require-initialization.js";
 import { isJsonRequireDecl } from "./json-require.js";
 import { isTimeValueDateDeclaration } from "./date-values.js";
@@ -5996,6 +5996,10 @@ export function lowerVarDecl(
     }
   }
   if (!ts.isIdentifier(decl.name)) lowerer.unsupported("SC1031", decl.name);
+  // A binding that holds `process.env` under any type but the env record
+  // is a snapshot copy whose reads would drift from Node's live table
+  // (refuseHeldEnvCopyHold); refuse it here, at the hold itself.
+  refuseHeldEnvCopyHold(lowerer, decl.name, decl);
   {
     const alias = lowerTupleAliasDecl(lowerer, decl);
     if (alias) return alias;

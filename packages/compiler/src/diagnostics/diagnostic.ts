@@ -1134,6 +1134,24 @@ export function heldEnvWriteDiag(loc: SrcLoc): ScrDiagnostic {
   };
 }
 
+/** A BINDING that holds `process.env` under a type which is not the env
+ * record (`const env: Record<string, string> = process.env as any`, a
+ * fixed-field annotation, `const { env } = process` with one): the hold is
+ * a snapshot record taken at the initializer, so its member reads would
+ * observe the environment as it was then, while Node's hold IS the
+ * environment object and reads the live table. Refuse where the hold is
+ * created rather than letting its reads drift silently. */
+export function heldEnvHoldDiag(loc: SrcLoc): ScrDiagnostic {
+  return {
+    code: "SC2014",
+    message:
+      "a value held from process.env under a type other than the environment record (a string-keyed record of string | undefined) is not supported: the hold is a snapshot copy taken where it is created, so its reads would see the environment as it was then while Node reads the live environment",
+    loc,
+    milestone: "later",
+    hint: "hold process.env without changing its type (const env = process.env), read the live table directly (process.env.NAME), or copy the entries you need: const env = { ...process.env, NAME: value }",
+  };
+}
+
 /** Records are monomorphic structs, so a value's shape must match the
  * expected shape exactly OR narrow through the width-copy family
  * (recordWidthPlan / the overflow capture: target fields copied off the

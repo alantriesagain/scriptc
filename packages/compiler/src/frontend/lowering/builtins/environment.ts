@@ -2,7 +2,7 @@ import { dynUndefinedExpr } from "../../../ir/build.js";
 import * as ts from "../../ts7/adapter.js";
 import { type Lowerer, PoisonError } from "../lowerer.js";
 import { locOf } from "../../program.js";
-import { heldEnvWriteDiag } from "../../../diagnostics/diagnostic.js";
+import { heldEnvHoldDiag, heldEnvWriteDiag } from "../../../diagnostics/diagnostic.js";
 import { pairsSnapshotHelper } from "../pairs-snapshot.js";
 import {
   DYN,
@@ -136,13 +136,36 @@ function writeTargetReceiver(node: ts.Node): ts.Expression | null {
  * the environment at that use site (lowerIdentifierExpr). */
 export function heldEnvValueType(lowerer: Lowerer, receiver: ts.Expression): IrType | null {
   if (!holdsEnvSnapshot(lowerer, receiver)) return null;
-  const mapped = lowerer.mapTypeOf(lowerer.typeOf(receiver));
+  return envRecordValueType(lowerer, lowerer.mapTypeOf(lowerer.typeOf(receiver)));
+}
+
+/** The env-record value type a hold must have to alias the live table —
+ * a pure index-signature record (no fields, not a tuple) whose value slot
+ * is the `string | undefined` union, which is what `process.env` maps to.
+ * Null for every other type. */
+function envRecordValueType(lowerer: Lowerer, mapped: IrType | null): IrType | null {
   if (mapped?.kind !== "record") return null;
   const shape = lowerer.shapes.get(mapped.shapeId);
   if (!shape || shape.tuple || shape.fields.length > 0 || shape.indexValue === undefined)
     return null;
   const value = lowerer.envValueType();
   return typeEquals(shape.indexValue, value) ? value : null;
+}
+
+/** Refuse a BINDING that holds `process.env` under a type which is not the
+ * env record — `const env: Record<string, string> = process.env as any`, a
+ * fixed-field annotation, `const e: any = process.env`. Node's hold IS the
+ * environment object, so member reads through it see the live table;
+ * here the hold is a snapshot record taken at the initializer, so reads
+ * would silently observe the environment as it was then (writes are
+ * already refused — refuseHeldEnvWrite). Refuse the hold where it is
+ * created instead of letting its later reads drift. `name` is the bound
+ * identifier, `blame` the declaration the diagnostic points at. */
+export function refuseHeldEnvCopyHold(lowerer: Lowerer, name: ts.Identifier, blame: ts.Node): void {
+  if (!holdsEnvSnapshot(lowerer, name)) return;
+  if (envRecordValueType(lowerer, lowerer.mapTypeOf(lowerer.typeOf(name))) !== null) return;
+  lowerer.pushDiag(heldEnvHoldDiag(locOf(blame)));
+  throw new PoisonError();
 }
 
 /** Refuse a write through a value HELD from `process.env` that cannot take
