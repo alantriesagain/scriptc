@@ -55,4 +55,16 @@ console.log(
   Object.keys(env).includes("SCRIPTC_HELD_LATE"),
   JSON.stringify({ ...env }).includes('"SCRIPTC_HELD_LATE":"late"'),
 );
+// Holds and process.env are the one environment object: identity
+// comparisons between them are equal, and with a primitive never.
+const alias = env;
+console.log(
+  "identity:",
+  env === env,
+  env === alias,
+  alias == process.env,
+  env !== process.env,
+  env === undefined,
+  env != null,
+);
 console.log("done");

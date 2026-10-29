@@ -2,9 +2,17 @@ import { dynUndefinedExpr } from "../../../ir/build.js";
 import * as ts from "../../ts7/adapter.js";
 import { type Lowerer, PoisonError } from "../lowerer.js";
 import { locOf } from "../../program.js";
-import { heldEnvHoldDiag, heldEnvWriteDiag } from "../../../diagnostics/diagnostic.js";
+import {
+  heldEnvHoldDiag,
+  heldEnvIdentityDiag,
+  heldEnvReassignedDiag,
+  heldEnvWriteDiag,
+} from "../../../diagnostics/diagnostic.js";
+import { bindingNeverReassigned } from "../binding-analysis.js";
+import { constituentTypes } from "../../ts7/checker.js";
 import { pairsSnapshotHelper } from "../pairs-snapshot.js";
 import {
+  BOOL,
   DYN,
   type IrExpr,
   type IrType,
@@ -91,8 +99,13 @@ export function holdsEnvSnapshot(
   // `const env = process.env` (or an identifier alias of one). The symbol's
   // value declaration is the `const` itself; the written identifier here is
   // a different node than the declared name, so no node identity check.
+  // A binding the program reassigns holds the environment only until the
+  // reassignment, so it is not a hold (refuseHeldEnvCopyHold refuses it).
   if (ts.isVariableDeclaration(decl)) {
-    return holdsEnvSnapshot(lowerer, decl.initializer, depth + 1);
+    return (
+      holdsEnvSnapshot(lowerer, decl.initializer, depth + 1) &&
+      !reassignedBinding(lowerer, symbol!, decl)
+    );
   }
   // `const { env } = process` (also `{ env: held }`).
   if (ts.isBindingElement(decl) && ts.isObjectBindingPattern(decl.parent)) {
@@ -104,10 +117,96 @@ export function holdsEnvSnapshot(
       named.text === "env" &&
       declaration.initializer !== undefined
     ) {
-      return lowerer.isStdlibGlobal(declaration.initializer, "process");
+      return (
+        lowerer.isStdlibGlobal(declaration.initializer, "process") &&
+        !reassignedBinding(lowerer, symbol!, declaration)
+      );
     }
   }
   return false;
+}
+
+/** Whether something writes the binding after its declaration: a `let` or
+ * `var` the file assigns (bindingNeverReassigned). A `const` never is. */
+function reassignedBinding(
+  lowerer: Lowerer,
+  symbol: ts.Symbol,
+  declaration: ts.VariableDeclaration,
+): boolean {
+  const list = declaration.parent;
+  if (ts.isVariableDeclarationList(list) && (list.flags & ts.NodeFlags.Const) !== 0) return false;
+  return !bindingNeverReassigned(lowerer, symbol, declaration);
+}
+
+/** Whether an expression is the environment object to Node: the ambient
+ * `process.env` or a value held from it (holdsEnvSnapshot). */
+function denotesEnvironment(lowerer: Lowerer, node: ts.Expression): boolean {
+  return isProcessEnv(lowerer, unwrapped(node)) || holdsEnvSnapshot(lowerer, node);
+}
+
+function unwrapped(node: ts.Expression): ts.Expression {
+  let inner = node;
+  while (
+    ts.isParenthesizedExpression(inner) ||
+    ts.isAsExpression(inner) ||
+    ts.isNonNullExpression(inner) ||
+    ts.isSatisfiesExpression(inner)
+  )
+    inner = inner.expression;
+  return inner;
+}
+
+/** `a === b`, `a == b` and their negations where an operand is the
+ * environment object (denotesEnvironment). Every use of a held value reads
+ * a snapshot, so the snapshots would never be identical, while Node
+ * compares the one environment object:
+ * - two operands that both denote it compare equal, folded (neither
+ *   operand has an effect: each is a binding read or `process.env`);
+ * - one compared with a primitive, `null` or `undefined` keeps the
+ *   ordinary lowering, whose answer (never equal) is Node's;
+ * - one compared with another object is refused (heldEnvIdentityDiag).
+ * Null when no operand denotes the environment. */
+export function lowerEnvironmentIdentity(
+  lowerer: Lowerer,
+  expr: ts.BinaryExpression,
+  loc: SrcLoc,
+): IrExpr | null {
+  const op = expr.operatorToken.kind;
+  const negated =
+    op === ts.SyntaxKind.ExclamationEqualsEqualsToken ||
+    op === ts.SyntaxKind.ExclamationEqualsToken;
+  if (
+    !negated &&
+    op !== ts.SyntaxKind.EqualsEqualsEqualsToken &&
+    op !== ts.SyntaxKind.EqualsEqualsToken
+  )
+    return null;
+  const left = denotesEnvironment(lowerer, expr.left);
+  const right = denotesEnvironment(lowerer, expr.right);
+  if (!left && !right) return null;
+  if (left && right) return { kind: "boolLit", value: !negated, type: BOOL, loc };
+  if (isPrimitiveOperand(lowerer.typeOf(left ? expr.right : expr.left))) return null;
+  lowerer.pushDiag(heldEnvIdentityDiag(loc));
+  throw new PoisonError();
+}
+
+/** Whether a checker type has only primitive values (`null` and `undefined`
+ * included), which are never the environment object. */
+function isPrimitiveOperand(type: ts.Type): boolean {
+  if ((type.flags & ts.TypeFlags.Union) !== 0)
+    return constituentTypes(type).every(isPrimitiveOperand);
+  return (
+    (type.flags &
+      (ts.TypeFlags.Null |
+        ts.TypeFlags.Undefined |
+        ts.TypeFlags.Void |
+        ts.TypeFlags.StringLike |
+        ts.TypeFlags.NumberLike |
+        ts.TypeFlags.BooleanLike |
+        ts.TypeFlags.BigIntLike |
+        ts.TypeFlags.ESSymbolLike)) !==
+    0
+  );
 }
 
 /** The receiver expression of a write target — the assignment's or delete's
@@ -162,6 +261,15 @@ function envRecordValueType(lowerer: Lowerer, mapped: IrType | null): IrType | n
  * created instead of letting its later reads drift. `name` is the bound
  * identifier, `blame` the declaration the diagnostic points at. */
 export function refuseHeldEnvCopyHold(lowerer: Lowerer, name: ts.Identifier, blame: ts.Node): void {
+  if (
+    ts.isVariableDeclaration(blame) &&
+    holdsEnvSnapshot(lowerer, blame.initializer, 1) &&
+    !holdsEnvSnapshot(lowerer, name)
+  ) {
+    // Initialized from process.env but reassigned later (holdsEnvSnapshot).
+    lowerer.pushDiag(heldEnvReassignedDiag(locOf(blame)));
+    throw new PoisonError();
+  }
   if (!holdsEnvSnapshot(lowerer, name)) return;
   if (envRecordValueType(lowerer, lowerer.mapTypeOf(lowerer.typeOf(name))) !== null) return;
   lowerer.pushDiag(heldEnvHoldDiag(locOf(blame)));
