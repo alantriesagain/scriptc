@@ -61,6 +61,11 @@ if [ "$(git rev-parse "$TAG^{commit}")" != "$BASE_SHA" ] && [ -n "$(git diff --s
 fi
 echo "== base $BASE ($(git rev-parse --short "$BASE_SHA"))"
 echo "== upstream/main $(git log -1 --format='%h %s' upstream/main) ($(git rev-list --count "$BASE_SHA..upstream/main") commits past the base)"
+BASE_VERSION=$(git show "$BASE_SHA:packages/cli/package.json" | sed -n 's/.*"version": "\([^"]*\)".*/\1/p' | head -1)
+MAIN_VERSION=$(git show upstream/main:packages/cli/package.json | sed -n 's/.*"version": "\([^"]*\)".*/\1/p' | head -1)
+if [ -n "$MAIN_VERSION" ] && [ "$MAIN_VERSION" != "$BASE_VERSION" ]; then
+  echo "refork: note: upstream/main says $MAIN_VERSION while the newest tag is $BASE ($BASE_VERSION); wait for the v$MAIN_VERSION tag and its published LLVM helper before porting"
+fi
 echo "== node $(node --version) (tests want .node-version's 24.22.0)"
 
 TSC_TS_TAG=$(git show "$BASE_SHA:packages/compiler/package.json" | sed -n 's/.*"tsc-ts": "\([^"]*\)".*/\1/p')
