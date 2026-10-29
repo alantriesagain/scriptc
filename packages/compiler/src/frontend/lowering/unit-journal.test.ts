@@ -42,7 +42,15 @@ const sized: Record<string, readonly string[]> = {
     "extendedNames",
   ],
   unions: ["keyedNameKeys", "byKey", "byId", "armTags", "unions", "recIds", "pendingRec"],
-  keyOrder: ["literals", "copies", "methodResults", "observed", "changed"],
+  keyOrder: [
+    "literals",
+    "copies",
+    "methodResults",
+    "widths",
+    "observed",
+    "changed",
+    "keptSourceShapes",
+  ],
 };
 
 /** Scratch of the registries' own mapping (it unwinds before mapType returns). */

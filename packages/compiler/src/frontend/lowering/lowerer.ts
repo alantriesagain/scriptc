@@ -10515,6 +10515,9 @@ export class Lowerer {
       ...this.liftedFns,
       ...this.implicitFns,
     ]);
+    // A kept width spread holds undeclared keys at run time, so the captures
+    // that consult a kept source must be active for it too.
+    if (this.keyOrder.keptWidthSpreads > 0) this.recordSourcesPossible = true;
     observeRecordLiteralRebuilds(null);
     // A program whose functions never convert a checked-dynamic value into a
     // closed record cannot keep a source view anywhere, so the captures that

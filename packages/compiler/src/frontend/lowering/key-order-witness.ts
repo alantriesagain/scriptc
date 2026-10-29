@@ -60,8 +60,10 @@
  * (and today's SC6002 warnings). Shapes that no order surface observes
  * keep today's table too. */
 import type { IrExpr, IrFunction, IrRecordShape, IrStmt, IrType, SrcLoc } from "../../ir/ir.js";
+import { dynUndefinedExpr, strLit } from "../../ir/build.js";
 import {
   BOOL,
+  DYN,
   F64,
   KEY_ORDER_FIELD,
   shapeHasAccessorSlots,
@@ -125,6 +127,20 @@ export type KeyOrderSegment =
   /** A spread whose keys are only known at run time. */
   | { kind: "opaque" };
 
+/** One contributor of a width literal, in source order: a spread source's
+ * binding (whose own keys the copy takes when the spread runs), or an
+ * explicit key the literal creates at that position. */
+export type WidthSegment =
+  | { kind: "spread"; value: IrExpr & { kind: "varRef" } }
+  | { kind: "key"; name: string };
+
+/** A width literal's contributors and whether its static copy drops source
+ * keys the target does not declare. */
+export interface WidthNote {
+  segments: readonly WidthSegment[];
+  drops: boolean;
+}
+
 /** Witness notes the lowering attaches to the IR nodes it builds. Keyed by
  * node identity, so nodes a speculative lowering discards are never walked.
  * Literals the IR rewriters rebuild (traverse.ts mapExprChildren) carry
@@ -134,11 +150,25 @@ export class KeyOrderNotes {
   private readonly literals = new Map<IrExpr, KeyOrderSegment[]>();
   private readonly copies = new Map<IrExpr, string>();
   private readonly methodResults = new Map<IrExpr, string>();
+  /** Literals whose spreads copy source keys the target does not declare
+   * (a width spread), with their contributors (keepWidthSpreads), and
+   * every spread literal over a shape that can keep a source (same-shape
+   * copies, which keep the source's undeclared keys when it has any). */
+  private readonly widths = new Map<IrExpr, WidthNote>();
   /** Shapes a frontend order surface (keys, values/entries, inspect,
    * index-signature merges) walks. */
   readonly observed = new Set<string>();
   /** Shapes whose table this pass replaced. */
   readonly changed = new Set<string>();
+  /** Width-spread literals this pass kept as a record's source
+   * (keepWidthSpreads). A kept copy holds undeclared keys, so the
+   * index-signature capture must consult it (lowerer.ts). */
+  keptWidthSpreads = 0;
+  /** The shapes those kept copies build. A width spread or clone only
+   * keeps a source on a shape in here, so the reflective helpers
+   * (lower-calls.ts) stay static for every other shape, and the pass reads
+   * it back as a spread source that can already hold one. */
+  readonly keptSourceShapes = new Set<string>();
 
   /** The sizes of the notes' tables (unit-journal.ts). */
   journalSizes(): number[] {
@@ -146,8 +176,10 @@ export class KeyOrderNotes {
       this.literals.size,
       this.copies.size,
       this.methodResults.size,
+      this.widths.size,
       this.observed.size,
       this.changed.size,
+      this.keptSourceShapes.size,
     ];
   }
 
@@ -155,6 +187,19 @@ export class KeyOrderNotes {
     this.literals.set(node, segments);
     return node;
   }
+
+  /** A record literal whose spreads copy source keys the target does not
+   * declare (`drops`), with its contributors. */
+  width(node: IrExpr, segments: WidthSegment[], drops: boolean): IrExpr {
+    this.widths.set(node, { segments, drops });
+    return node;
+  }
+
+  widthOf(node: IrExpr): WidthNote | undefined {
+    return this.widths.get(node);
+  }
+
+
 
   copy(node: IrExpr, sourceShapeId: string): IrExpr {
     this.copies.set(node, sourceShapeId);
@@ -177,6 +222,8 @@ export class KeyOrderNotes {
     if (source !== undefined) this.copies.set(to, source);
     const method = this.methodResults.get(from);
     if (method !== undefined) this.methodResults.set(to, method);
+    const width = this.widths.get(from);
+    if (width !== undefined) this.widths.set(to, width);
   }
 
   observe(type: IrType): void {
@@ -466,6 +513,8 @@ export function applyKeyOrderWitnesses(lowerer: Lowerer, fns: readonly IrFunctio
    * each one is built. A literal's notes are shared by its rebuilt copies,
    * so `literalSites` counts every literal of each witness. */
   const leadingSpreads = new Map<KeyOrderSegment[], LeadingSpread[]>();
+  /** Width literals (KeyOrderNotes.width), where each is built. */
+  const widthSites: (LeadingSpread & { note: WidthNote })[] = [];
   const literalSites = new Map<KeyOrderSegment[], number>();
   const loops: number[] = [];
   let loopIds = 0;
@@ -540,6 +589,9 @@ export function applyKeyOrderWitnesses(lowerer: Lowerer, fns: readonly IrFunctio
         // A spread literal evaluates its sources into bindings first.
         const literal = e.result;
         if (literal.kind !== "recordLit" || currentFn === null) return;
+        const width = notes.widthOf(literal);
+        if (width !== undefined)
+          widthSites.push({ wrapper: e, literal, fn: currentFn, note: width });
         const segments = notes.literalOf(literal);
         const first = segments?.[0];
         if (segments === undefined || first?.kind !== "spread" || first.value === undefined) return;
@@ -672,6 +724,49 @@ export function applyKeyOrderWitnesses(lowerer: Lowerer, fns: readonly IrFunctio
   for (const id of runtimeShapes) factsOf(id).runtime = true;
   for (const id of declaredShapes) if (!runtimeShapes.has(id)) factsOf(id).pinned = true;
 
+  // ── width spreads ───────────────────────────────────────────────────
+  // A width spread keeps the copy's own keys when an order surface can
+  // observe its target (keepWidthSpreads). The observation is the one the
+  // tables use below, before ordered spreads join it. A source can be
+  // another width spread's target, so this runs until no site joins.
+  const keptWidths = new Set<IrExpr>();
+  /** Shapes a kept dropping copy builds: the copy holds keys the shape has
+   * no slot for, so its order is its kept source's, and the shape keeps
+   * today's table (as a literal with a dropped field does without the
+   * kept source). */
+  const keptDropShapes = new Set<string>();
+  {
+    const early = new Set<string>();
+    const earlySeen = new Set<string>();
+    for (const id of notes.observed) shapesIn({ kind: "record", shapeId: id }, early, earlySeen);
+    for (const root of observedRoots) shapesIn(root, early, earlySeen);
+    for (let grew = true; grew;) {
+      grew = false;
+      for (const { wrapper, literal, note } of widthSites) {
+        if (!note.drops || keptWidths.has(wrapper) || literal.type.kind !== "record") continue;
+        if (!early.has(literal.type.shapeId) || !widthKeepable(lowerer, wrapper, note.segments))
+          continue;
+        keptWidths.add(wrapper);
+        notes.keptSourceShapes.add(literal.type.shapeId);
+        grew = true;
+        for (const segment of note.segments)
+          if (segment.kind === "spread") shapesIn(segment.value.type, early, earlySeen);
+      }
+    }
+    for (const { wrapper, literal } of widthSites) {
+      if (!keptWidths.has(wrapper) || literal.type.kind !== "record") continue;
+      const shapeId = literal.type.shapeId;
+      notes.keptSourceShapes.add(shapeId);
+      // A kept copy that drops keys enumerates through its own kept source,
+      // so like a checked conversion it contributes no order to its shape's
+      // table, and the shape keeps today's table.
+      const segments = notes.literalOf(literal);
+      const literals = facts.get(shapeId)?.literals;
+      const at = segments === undefined || literals === undefined ? -1 : literals.indexOf(segments);
+      if (at >= 0) literals!.splice(at, 1);
+      keptDropShapes.add(shapeId);
+    }
+  }
   // ── scope ───────────────────────────────────────────────────────────
   // Only plain declared-field shapes with a table take part.
   const inScope = (shape: IrRecordShape | undefined): shape is IrRecordShape =>
@@ -709,7 +804,10 @@ export function applyKeyOrderWitnesses(lowerer: Lowerer, fns: readonly IrFunctio
       return keys.join("\0") !== table;
     });
   });
-  if (!interesting) return;
+  if (!interesting) {
+    keepWidthSpreads(notes, widthSites, keptWidths, new Set());
+    return;
+  }
 
   // ── presence classes and late-write constraints ─────────────────────
   const maybeAbsent = (id: string, key: string): boolean => {
@@ -1093,6 +1191,13 @@ export function applyKeyOrderWitnesses(lowerer: Lowerer, fns: readonly IrFunctio
   for (const id of notes.observed)
     shapesIn({ kind: "record", shapeId: id }, observed, observedSeen);
   for (const root of observedRoots) shapesIn(root, observed, observedSeen);
+  // A kept width spread snapshots its sources' own keys, an order surface
+  // over each source.
+  for (const { wrapper, note } of widthSites) {
+    if (!keptWidths.has(wrapper)) continue;
+    for (const segment of note.segments)
+      if (segment.kind === "spread") shapesIn(segment.value.type, observed, observedSeen);
+  }
   // An ordered spread's copies of values without a source take the source's
   // order from its table, which must then hold the resolved order.
   const orderedTarget = (sites: readonly LeadingSpread[]): string | null => {
@@ -1121,6 +1226,7 @@ export function applyKeyOrderWitnesses(lowerer: Lowerer, fns: readonly IrFunctio
   // Ordered spreads carry their source's order over (see above).
   let orderedResults = 0;
   const rewritten = new Set<IrExpr>();
+  keepWidthSpreads(notes, widthSites, keptWidths, rewritten);
   for (const [segments, sites] of leadingSpreads) {
     const first = segments[0];
     if (!orderedSpreads.has(segments) || first?.kind !== "spread" || first.value === undefined)
@@ -1546,7 +1652,7 @@ export function applyKeyOrderWitnesses(lowerer: Lowerer, fns: readonly IrFunctio
     );
   };
   const plan = new Map<IrExpr & { kind: "recordLit" }, IrExpr | number>();
-  const dropped = new Set<string>();
+  const dropped = new Set<string>(keptDropShapes);
   for (const [id, list] of sites) {
     for (const lit of list) {
       const index = orderIndex(id, lit);
@@ -1695,3 +1801,98 @@ export function applyKeyOrderWitnesses(lowerer: Lowerer, fns: readonly IrFunctio
     shape.orderVariants = tables;
   }
 }
+
+/** Width spreads: `{ ...wide }` into a narrower declared record. Node's copy
+ * holds every own key of the source; the static copy holds the declared
+ * ones. When an order surface can observe the target shape (the same
+ * observation the order tables use), the literal keeps the copy's whole
+ * own-key list as the record's kept source (scr_record_source_note): each
+ * spread source's own keys are snapshot as the spread runs, explicit keys
+ * hold placeholders at their position, and the record stays the source of
+ * truth for every declared key. Programs no surface observes keep the
+ * static copy byte for byte. */
+function widthKeepable(
+  lowerer: Lowerer,
+  wrapper: IrExpr & { kind: "seqExpr" },
+  width: readonly WidthSegment[],
+): boolean {
+  return width.every(
+    (segment) =>
+      segment.kind === "key" ||
+      ((segment.value.type.kind === "dyn" || lowerer.dynConvertible(segment.value.type)) &&
+        wrapper.stmts.some(
+          (stmt) => stmt.kind === "varDecl" && stmt.localId === segment.value.localId,
+        )),
+  );
+}
+
+function keepWidthSpreads(
+  notes: KeyOrderNotes,
+  sites: readonly (LeadingSpread & { note: WidthNote })[],
+  kept: ReadonlySet<IrExpr>,
+  rewritten: Set<IrExpr>,
+): void {
+  let index = 0;
+  for (const { wrapper, literal, fn, note } of sites) {
+    if (!kept.has(wrapper) || rewritten.has(wrapper)) continue;
+    rewritten.add(wrapper);
+    notes.keptWidthSpreads++;
+    const width = note.segments;
+    const loc = literal.loc;
+    const site = index++;
+    const empty = (): IrExpr => ({ kind: "dynObjLit", fields: [], type: DYN, loc });
+    const assign = (target: IrExpr, from: IrExpr): IrExpr => ({
+      kind: "libCall",
+      fn: "dyn.assign",
+      args: [target, from],
+      type: DYN,
+      loc,
+    });
+    let mirror: IrExpr = empty();
+    let spreadIndex = 0;
+    for (const segment of width) {
+      if (segment.kind === "key") {
+        mirror = assign(mirror, {
+          kind: "dynObjLit",
+          fields: [{ key: strLit(segment.name, loc), value: dynUndefinedExpr(loc) }],
+          type: DYN,
+          loc,
+        });
+        continue;
+      }
+      // The spread copies the source's own keys when it runs: snapshot them
+      // right after the literal evaluated the source.
+      const localId = `%widthKeys.${site}.${spreadIndex++}`;
+      fn.locals.push({ id: localId, name: "%widthKeys", type: DYN, mutable: false });
+      const boxed: IrExpr =
+        segment.value.type.kind === "dyn"
+          ? segment.value
+          : { kind: "dynFrom", value: segment.value, liveRef: true, type: DYN, loc };
+      const at = wrapper.stmts.findIndex(
+        (stmt) => stmt.kind === "varDecl" && stmt.localId === segment.value.localId,
+      );
+      wrapper.stmts.splice(at + 1, 0, {
+        kind: "varDecl",
+        localId,
+        init: assign(empty(), boxed),
+        loc,
+      });
+      mirror = assign(mirror, { kind: "varRef", localId, type: DYN, loc });
+    }
+    const builtId = `%widthKept.${site}`;
+    fn.locals.push({ id: builtId, name: "%widthKept", type: literal.type, mutable: false });
+    const built: IrExpr = { kind: "varRef", localId: builtId, type: literal.type, loc };
+    wrapper.stmts.push(
+      { kind: "varDecl", localId: builtId, init: literal, loc },
+      {
+        kind: "exprStmt",
+        expr: { kind: "libCall", fn: "record.sourceNote", args: [built, mirror], type: VOID, loc },
+        loc,
+      },
+    );
+    wrapper.result = built;
+  }
+}
+
+
+
