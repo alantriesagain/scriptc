@@ -261,6 +261,7 @@ void scr_dyn_install_to_string_tag_symbol(ScrDyn *key) {
   scr_to_string_tag_symbol = scr_dyn_retain(key);
   scr_atexit(scr_to_string_tag_symbol_cleanup);
 }
+const ScrDyn *scr_dyn_to_string_tag_symbol(void) { return scr_to_string_tag_symbol; }
 
 void scr_dyn_install_iterator_symbol(ScrDyn *key) {
   if (scr_iterator_symbol) return;
@@ -4970,15 +4971,33 @@ static bool scr_typed_ref_record_set(ScrDyn *d, const ScrStr *key, const ScrDyn 
   return scr_typed_ref_record_store(d, ops, index, value);
 }
 
-/* Object.assign onto a live record from a plain object whose own
- * properties are all data properties: each enumerable one that names a
- * present declared field stores in place. Answers false at the first key
+/* Object.assign onto a live record from another live record, or from a
+ * plain object whose own properties are all data properties: each
+ * enumerable one that names a present declared field stores in place. Answers false at the first key
  * it cannot store, leaving every key to the snapshot path, which stores
  * the already stored values again unchanged. */
 static bool scr_typed_ref_record_assign(ScrDyn *d, const ScrDyn *src) {
   const ScrDynTypedRecordOps *ops = scr_typed_ref_record_ops(d);
-  if (!ops || !ops->set || src->kind != SCR_DYN_OBJ || src->symbol_properties || src->symbol_keys)
-    return false;
+  if (!ops || !ops->set) return false;
+  /* A live record source (an object literal boxed as its record) has only
+   * enumerable string-keyed data fields, in its declared order. */
+  const ScrDynTypedRecordOps *from =
+      src->kind == SCR_DYN_TYPED_REF ? scr_typed_ref_record_ops(src) : NULL;
+  if (from) {
+    void *source = src->v.typed_ref.ptr;
+    for (size_t i = 0; i < from->count; i++) {
+      if (!from->fixed && !from->has(source, i)) continue;
+      size_t index;
+      if (!scr_typed_ref_record_field(ops, from->names[i], &index)) return false;
+      ScrDyn *value = from->get(source, i);
+      bool stored = scr_typed_ref_record_store(d, ops, index, value);
+      scr_dyn_release(value);
+      if (!stored) return false;
+      if (scr_exc_pending()) return true;
+    }
+    return true;
+  }
+  if (src->kind != SCR_DYN_OBJ || src->symbol_properties || src->symbol_keys) return false;
   size_t count = scr_dyn_obj_count(src);
   for (size_t i = 0; i < count; i++) {
     if (scr_dyn_obj_prop_at(src, i).accessor) return false;
