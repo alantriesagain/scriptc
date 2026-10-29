@@ -93,6 +93,7 @@ import {
 import { identityPreservingWidening } from "./coercions/identity.js";
 import { scanDivergences } from "./divergences.js";
 import { applyKeyOrderWitnesses, KeyOrderNotes } from "./key-order-witness.js";
+import { functionKeepsRecordSources } from "./record-sources.js";
 import { exprFunctionReference } from "../../ir/function-references.js";
 import { everyStmtList, observeRecordLiteralRebuilds } from "../../ir/traverse.js";
 import { checkedClassAssertion } from "./class-assertions.js";
@@ -3303,6 +3304,11 @@ export class Lowerer {
    * Reachability lowers inits before the declarations they discover, so
    * these rebuild after the worklist restores historical shape metadata. */
   readonly shapeOrderHelperFinalizers: (() => void)[] = [];
+  /** Whether any lowered function converts a checked-dynamic value into a
+   * closed record, the only conversion that can leave a record holding
+   * undeclared source keys (record-sources.ts). Settled once lowering ends,
+   * before the shape helpers finalize their bodies. */
+  recordSourcesPossible = false;
   /** Construction witnesses that choose each shape's enumeration order
    * once lowering settles (key-order-witness.ts). */
   readonly keyOrder = new KeyOrderNotes();
@@ -10427,6 +10433,22 @@ export class Lowerer {
       ...this.implicitFns,
     ]);
     observeRecordLiteralRebuilds(null);
+    // A program whose functions never convert a checked-dynamic value into a
+    // closed record cannot keep a source view anywhere, so the captures that
+    // consult one keep their static copy (record-sources.ts).
+    const allFunctions = [
+      ...orderedUnits,
+      ...initFunctions,
+      ...instanceFunctions,
+      ...this.liftedFns,
+      ...this.implicitFns,
+    ];
+    const sourceScan = { memo: new Map<string, boolean>(), visiting: new Set<string>() };
+    for (const fn of allFunctions) {
+      if (!functionKeepsRecordSources(this, fn, sourceScan)) continue;
+      this.recordSourcesPossible = true;
+      break;
+    }
     for (const finalize of this.shapeOrderHelperFinalizers) finalize();
     this.settleSharedHelperLocations([
       ...orderedUnits,

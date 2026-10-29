@@ -8,9 +8,12 @@
  * serialization, untyped views, inspect, Object.keys/values/entries —
  * answer through the record's live checked view instead of its static
  * field list. This module names the record types that can carry such a
- * source and the runtime test the surfaces branch on. */
-import type { IrExpr, IrType, SrcLoc } from "../../ir/ir.js";
+ * source, the runtime test the surfaces branch on, and whether the program
+ * converts anything into one at all (a program without such a conversion
+ * answers the test false everywhere, so its captures keep static copies). */
+import type { IrExpr, IrFunction, IrType, SrcLoc } from "../../ir/ir.js";
 import { BOOL, DYN, recordTextCodecClass, shapeHasAccessorSlots } from "../../ir/ir.js";
+import { everyStmtList } from "../../ir/traverse.js";
 import { varRef } from "../../ir/build.js";
 import type { Lowerer } from "./lowerer.js";
 import { isPerfEntryType } from "./builtins/performance.js";
@@ -35,6 +38,70 @@ export function recordMayKeepSource(lowerer: Lowerer, t: IrType & { kind: "recor
  * properties. */
 export function recordSourceTest(value: IrExpr, loc: SrcLoc): IrExpr {
   return { kind: "libCall", fn: "record.sourceHas", args: [value], type: BOOL, loc };
+}
+
+/** A union revisited while it is being visited answers as if its cycle arm
+ * were empty (`keeps: false`), so the caller's answer is incomplete until the
+ * outer union settles. `cycled` marks that incompleteness: such an answer is
+ * never memoized, because another entry point into the same cycle could reach
+ * the missing arm. */
+interface KeepsSourceAnswer {
+  keeps: boolean;
+  cycled: boolean;
+}
+
+/** Shared work list of the whole-program scan: settled union answers, and the
+ * unions on the current path. */
+export interface KeepsSourceScan {
+  memo: Map<string, boolean>;
+  visiting: Set<string>;
+}
+
+/** Whether a checked conversion into `target` can leave a record holding
+ * undeclared source keys. The conversion reads one record at a time, so the
+ * records nested in a union arm, a promise, or an array count too. */
+function conversionKeepsSource(
+  lowerer: Lowerer,
+  target: IrType,
+  scan: KeepsSourceScan,
+): KeepsSourceAnswer {
+  if (target.kind === "record")
+    return { keeps: recordMayKeepSource(lowerer, target), cycled: false };
+  if (target.kind === "promise") return conversionKeepsSource(lowerer, target.inner, scan);
+  if (target.kind === "array") return conversionKeepsSource(lowerer, target.elem, scan);
+  if (target.kind !== "union") return { keeps: false, cycled: false };
+  const known = scan.memo.get(target.unionId);
+  if (known !== undefined) return { keeps: known, cycled: false };
+  if (scan.visiting.has(target.unionId)) return { keeps: false, cycled: true };
+  const union = lowerer.unions.get(target.unionId);
+  if (union === undefined) return { keeps: false, cycled: false };
+  scan.visiting.add(target.unionId);
+  let keeps = false;
+  let cycled = false;
+  for (const arm of union.arms) {
+    const answer = conversionKeepsSource(lowerer, arm, scan);
+    keeps = keeps || answer.keeps;
+    cycled = cycled || answer.cycled;
+  }
+  scan.visiting.delete(target.unionId);
+  if (!cycled) scan.memo.set(target.unionId, keeps);
+  return { keeps, cycled };
+}
+
+/** Whether `fn` holds a validated conversion that can note a record source:
+ * a `dynCheck` whose target accepts `recordMayKeepSource`. Only such a
+ * conversion creates the kept view `recordSourceTest` answers, so a program
+ * without one never needs a capture to consult the view. */
+export function functionKeepsRecordSources(
+  lowerer: Lowerer,
+  fn: IrFunction,
+  scan: KeepsSourceScan,
+): boolean {
+  return !everyStmtList(fn.body, {
+    expr: (expr) =>
+      expr.kind !== "dynCheck" || !conversionKeepsSource(lowerer, expr.type, scan).keeps,
+    stmt: () => true,
+  });
 }
 
 /** A reflective answer over a record value that branches on its kept
