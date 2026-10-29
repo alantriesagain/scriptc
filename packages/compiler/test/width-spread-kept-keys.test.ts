@@ -73,3 +73,66 @@ export {};
   expect(notes).toBe(1);
 });
 
+test("a for-in without kept record sources answers the static walk", async () => {
+  const { ir } = await sourceNotes(
+    `type Narrow = { a: number; b?: string };
+const r: Narrow = { a: 1 };
+const keys: string[] = [];
+for (const k in r) keys.push(k);
+console.log(keys.join(","));
+export {};
+`,
+  );
+  expect(ir).not.toContain("record.sourceHas");
+});
+
+test("a for-in answers through a kept source once the program keeps a width spread", async () => {
+  const { ir } = await sourceNotes(
+    `type Narrow = { a: number; b?: string };
+type Wide = { a: number; b?: string; extra: string };
+function narrow(w: Wide): Narrow {
+  return { ...w };
+}
+const r = JSON.parse('{"a":1}') as Narrow;
+const keys: string[] = [];
+for (const k in r) keys.push(k);
+console.log(keys.join(","), JSON.stringify(narrow({ a: 1, extra: "x" })));
+export {};
+`,
+  );
+  expect(ir).toContain("record.sourceHas");
+});
+
+test("a for-in over another shape stays static when a width spread is kept elsewhere", async () => {
+  const { ir } = await sourceNotes(
+    `type Narrow = { a: number; b?: string };
+type Other = { x: number; y?: string };
+type Wide = { a: number; b?: string; extra: string };
+function narrow(w: Wide): Narrow {
+  return { ...w };
+}
+const r: Other = JSON.parse('{"x":1}') as Other;
+const keys: string[] = [];
+for (const k in r) keys.push(k);
+console.log(keys.join(","), JSON.stringify(narrow({ a: 1, extra: "x" })));
+export {};
+`,
+  );
+  expect(ir).not.toContain("record.sourceHas");
+});
+
+test("a same-shape copy of a shape no conversion builds stays the static copy", async () => {
+  const { notes, ir } = await sourceNotes(
+    `type Narrow = { a: number; b?: string };
+function copy(r: Narrow): Narrow {
+  return { ...r };
+}
+const k: Narrow = { a: 1 };
+console.log(JSON.stringify(copy(k)));
+export {};
+`,
+  );
+  expect(notes).toBe(0);
+  expect(ir).not.toContain("%widthKeys");
+});
+

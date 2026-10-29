@@ -80,7 +80,7 @@ import {
 import type { Lowerer } from "./lowerer.js";
 import * as ts from "../ts7/adapter.js";
 import { ALWAYS_THROW_LIB_FNS } from "../../ir/builtin-effects.js";
-import { recordMayKeepSource } from "./record-sources.js";
+import { recordMayKeepSource, recordSourceTest } from "./record-sources.js";
 
 /** The statements a key-order helper runs for record `ref`: `walks[0]`,
  * its walk over the shape's table, or, for a shape with orderVariants, a
@@ -155,6 +155,10 @@ export class KeyOrderNotes {
    * every spread literal over a shape that can keep a source (same-shape
    * copies, which keep the source's undeclared keys when it has any). */
   private readonly widths = new Map<IrExpr, WidthNote>();
+  /** `"k" in r` answers over a closed record whose literal key the shape
+   * does not declare, with the receiver the static form evaluated
+   * (keepSourceProbes). */
+  private readonly sourceProbes = new Map<IrExpr, { receiver: IrExpr; key: string }>();
   /** Shapes a frontend order surface (keys, values/entries, inspect,
    * index-signature merges) walks. */
   readonly observed = new Set<string>();
@@ -177,6 +181,7 @@ export class KeyOrderNotes {
       this.copies.size,
       this.methodResults.size,
       this.widths.size,
+      this.sourceProbes.size,
       this.observed.size,
       this.changed.size,
       this.keptSourceShapes.size,
@@ -199,6 +204,16 @@ export class KeyOrderNotes {
     return this.widths.get(node);
   }
 
+  /** A statically-false `"k" in r` over a closed record, which a kept
+   * source can make true. */
+  sourceProbe(node: IrExpr, receiver: IrExpr, key: string): IrExpr {
+    this.sourceProbes.set(node, { receiver, key });
+    return node;
+  }
+
+  sourceProbeOf(node: IrExpr): { receiver: IrExpr; key: string } | undefined {
+    return this.sourceProbes.get(node);
+  }
 
 
   copy(node: IrExpr, sourceShapeId: string): IrExpr {
@@ -224,6 +239,8 @@ export class KeyOrderNotes {
     if (method !== undefined) this.methodResults.set(to, method);
     const width = this.widths.get(from);
     if (width !== undefined) this.widths.set(to, width);
+    const probe = this.sourceProbes.get(from);
+    if (probe !== undefined) this.sourceProbes.set(to, probe);
   }
 
   observe(type: IrType): void {
@@ -515,6 +532,8 @@ export function applyKeyOrderWitnesses(lowerer: Lowerer, fns: readonly IrFunctio
   const leadingSpreads = new Map<KeyOrderSegment[], LeadingSpread[]>();
   /** Width literals (KeyOrderNotes.width), where each is built. */
   const widthSites: (LeadingSpread & { note: WidthNote })[] = [];
+  /** `"k" in r` sites a kept source can answer true (keepSourceProbes). */
+  const probeSites: { node: IrExpr; fn: IrFunction }[] = [];
   const literalSites = new Map<KeyOrderSegment[], number>();
   const loops: number[] = [];
   let loopIds = 0;
@@ -550,6 +569,8 @@ export function applyKeyOrderWitnesses(lowerer: Lowerer, fns: readonly IrFunctio
     inits.set(id, { count: 1, fn: fnName, loop: loopKey(), pos, fresh });
   };
   const visitExpr = (e: IrExpr): void => {
+    const probe = notes.sourceProbeOf(e);
+    if (probe !== undefined && currentFn !== null) probeSites.push({ node: e, fn: currentFn });
     switch (e.kind) {
       case "recordLit": {
         if (e.type.kind !== "record") return;
@@ -767,6 +788,11 @@ export function applyKeyOrderWitnesses(lowerer: Lowerer, fns: readonly IrFunctio
       keptDropShapes.add(shapeId);
     }
   }
+  // A program that keeps no width spread is byte-identical to main: the
+  // reflective surfaces below (and the two helper finalizers in
+  // lower-calls.ts, which consult keptSourceShapes) stay static there, as
+  // they did before this pass.
+  keepSourceProbes(lowerer, notes, probeSites, keptWidths.size > 0);
   // ── scope ───────────────────────────────────────────────────────────
   // Only plain declared-field shapes with a table take part.
   const inScope = (shape: IrRecordShape | undefined): shape is IrRecordShape =>
@@ -1802,6 +1828,25 @@ export function applyKeyOrderWitnesses(lowerer: Lowerer, fns: readonly IrFunctio
   }
 }
 
+/** Rewrite a node its parent already holds a reference to: clear the fields
+ * its old kind used, then copy the replacement's (a `seqExpr`). The compiler
+ * compiles this file too, where `Object.keys` over a big node union has no
+ * lowering, so the fields are cleared explicitly. */
+function replaceInPlace(node: IrExpr, replacement: IrExpr): void {
+  if (replacement.kind !== "seqExpr") return;
+  const fields = node as unknown as Record<string, unknown>;
+  delete fields["value"];
+  delete fields["stmts"];
+  delete fields["result"];
+  delete fields["source"];
+  delete fields["overrides"];
+  fields["kind"] = replacement.kind;
+  fields["stmts"] = replacement.stmts;
+  fields["result"] = replacement.result;
+  fields["type"] = replacement.type;
+  fields["loc"] = replacement.loc;
+}
+
 /** Width spreads: `{ ...wide }` into a narrower declared record. Node's copy
  * holds every own key of the source; the static copy holds the declared
  * ones. When an order surface can observe the target shape (the same
@@ -1895,4 +1940,51 @@ function keepWidthSpreads(
 }
 
 
+/** `"k" in r` over a closed record answers statically false for a literal
+ * key the shape does not declare. A kept source can hold it (a checked
+ * conversion's undeclared keys, a width spread's extras), so when the
+ * program keeps record sources the site answers through the record's own
+ * kept view instead. The receiver evaluates exactly once, as the static
+ * form evaluated it. */
+function keepSourceProbes(
+  lowerer: Lowerer,
+  notes: KeyOrderNotes,
+  sites: readonly { node: IrExpr; fn: IrFunction }[],
+  possible: boolean,
+): void {
+  if (!possible) return;
+  let index = 0;
+  for (const { node, fn } of sites) {
+    const probe = notes.sourceProbeOf(node);
+    if (probe === undefined) continue;
+    const recT = probe.receiver.type;
+    if (recT.kind !== "record") continue;
+    if (!recordMayKeepSource(lowerer, recT)) continue;
+    const loc = node.loc;
+    const id = `%inSource.${index++}`;
+    fn.locals.push({ id, name: "%inSource", type: recT, mutable: false });
+    const ref: IrExpr = { kind: "varRef", localId: id, type: recT, loc };
+    const replacement: IrExpr = {
+      kind: "seqExpr",
+      stmts: [{ kind: "varDecl", localId: id, init: probe.receiver, loc }],
+      result: {
+        kind: "logical",
+        op: "&&",
+        left: recordSourceTest(ref, loc),
+        right: {
+          kind: "dynHasKey",
+          key: probe.key,
+          value: { kind: "dynFrom", value: ref, liveRef: true, type: DYN, loc },
+          type: BOOL,
+          loc,
+        },
+        type: BOOL,
+        loc,
+      },
+      type: BOOL,
+      loc,
+    };
+    replaceInPlace(node, replacement);
+  }
+}
 
