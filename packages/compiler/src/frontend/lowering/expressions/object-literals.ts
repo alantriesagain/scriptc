@@ -1881,13 +1881,17 @@ export function lowerObjectLiteral(
       let srcNode: ts.Expression = prop.expression;
       while (ts.isParenthesizedExpression(srcNode)) srcNode = srcNode.expression;
       const condRecord = conditionalRecordSpreadOf(lowerer, prop.expression);
-      const srcLowered = capture(
+      let srcLowered = capture(
         condRecord !== null
           ? lowerConditionalRecordSpread(lowerer, condRecord, locOf(prop))
           : prop === expr.properties.nodes[0] && leadingSpreadLowered !== null
             ? leadingSpreadLowered
             : lowerer.lowerExpr(srcNode),
       );
+      {
+        const narrowed = checkedSpreadSource(lowerer, srcNode, srcLowered);
+        if (narrowed !== null) srcLowered = capture(narrowed);
+      }
       // Array callbacks can receive a record-or-undefined ABI even when
       // TypeScript describes a required record. Select the copy strategy
       // from that stored representation so absent sources copy nothing.
@@ -1909,7 +1913,7 @@ export function lowerObjectLiteral(
         const recArms = def?.arms.filter((a) => a.kind === "record") ?? [];
         if (
           !def ||
-          recArms.length !== 1 ||
+          recArms.length === 0 ||
           !def.arms.every((a) => a.kind === "record" || isUnitType(a))
         ) {
           lowerer.unsupported(
@@ -1918,8 +1922,6 @@ export function lowerObjectLiteral(
             `object spread of '${lowerer.fmt(srcType)}' sources (only known record shapes spread — ${NARROW_FIRST})`,
           );
         }
-        const recArm = recArms[0]! as IrType & { kind: "record" };
-        const recTag = def.arms.indexOf(recArm);
         // A checked-dynamic VALUE under the union-mapped checker type
         // (a JS dyn-holding binding): the present/absent desugar tests
         // union tags a dyn box does not carry — fence honestly instead
@@ -1932,242 +1934,218 @@ export function lowerObjectLiteral(
             `object spread of a checked-dynamic '${lowerer.fmt(srcType)}' source (${NARROW_FIRST})`,
           );
         }
-        const srcShape = lowerer.shapes.get(recArm.shapeId);
-        if (!srcShape)
-          throw new InternalCompilerError(`lowerer bug: spread of unknown shape ${recArm.shapeId}`);
-        fenceAccessorSpreadSource(lowerer, prop, srcShape);
-        if (srcShape.indexValue || shape.indexValue) {
-          const fallback = dynSpreadLiteral(lowerer, expr, type);
-          if (fallback) return fallback;
-          lowerer.unsupported(
-            "SC1090",
-            prop,
-            "object spread involving index-signature shapes (overflow keys are runtime state — copy the fields you need explicitly)",
-          );
-        }
-        const laterNames = new Set<string>();
-        for (const later of expr.properties.nodes.slice(expr.properties.nodes.indexOf(prop) + 1)) {
-          if (ts.isSpreadAssignment(later)) {
-            if (conditionalSpreadOf(later.expression) || andSpreadOf(lowerer, later.expression))
-              continue;
-            const lt = laterSpreadType(lowerer, later.expression);
-            if (lt?.kind === "record") {
-              // A field the later source may lack defines nothing.
-              for (const lf of lowerer.shapes.get(lt.shapeId)?.fields ?? [])
-                if (!canLackField(lf.type)) laterNames.add(lf.name);
-            }
-            continue;
-          }
-          if (
-            later.name &&
-            (ts.isIdentifier(later.name) ||
-              ts.isStringLiteral(later.name) ||
-              ts.isNumericLiteral(later.name) ||
-              (ts.isComputedPropertyName(later.name) &&
-                literalComputedKey(lowerer, later.name) !== null))
-          ) {
-            laterNames.add(propNameText(lowerer, later.name));
-          }
-        }
-        const srcRef = (): IrExpr => srcLowered ?? lowerer.lowerExpr(srcNode);
-        const srcNarrowed = (): IrExpr => ({
-          kind: "unionNarrow",
-          unionId: srcType.unionId,
-          tag: recTag,
-          value: srcRef(),
-          type: recArm,
-          loc: locOf(prop),
-        });
-        // The source PROVEN present: the checked extraction `x!` lowers to
-        // (narrowedArmHelper + checkedNarrowCall). A required target field
-        // with no earlier contributor has no absent representation, so
-        // `{ ...maybeRecord }` into it must find the record: the unit arm
-        // throws the catchable TypeError instead of leaving the slot unset
-        // (divergence 38's lying-assertion stance — the checker typed the
-        // spread's fields optional, so only a cast or an unchecked indexed
-        // read reaches this shape).
-        const srcPresent = (): IrExpr => {
-          const helper = lowerer.narrowedArmHelper(srcType.unionId, recArm, locOf(prop));
-          return helper
-            ? lowerer.checkedNarrowCall(helper, srcRef(), recArm, locOf(prop))
-            : srcNarrowed();
-        };
-        orderSegments.push({ kind: "spread", shapeId: recArm.shapeId, maybeAbsent: true });
-        for (const f of srcShape.fields) {
-          if (laterNames.has(f.name)) continue;
-          const targetType = fieldTypes.get(f.name);
-          // No slot on the target shape: the copy DROPS the field
-          // (divergence 36's stance, same as the plain-record spread).
-          if (!targetType) continue;
-          if (conditionalNames.has(f.name)) {
-            const conditionalDyn = conditionalFallback();
-            if (conditionalDyn) return conditionalDyn;
+        // Several record arms: each arm contributes its own fields behind its
+        // tag test, wrapping the earlier contributor, so a key that arm lacks
+        // keeps the earlier value (JS copies only the arm's own keys).
+        for (const recArmCandidate of recArms) {
+          const recArm = recArmCandidate as IrType & { kind: "record" };
+          const recTag = def.arms.indexOf(recArm);
+          const srcShape = lowerer.shapes.get(recArm.shapeId);
+          if (!srcShape)
+            throw new InternalCompilerError(
+              `lowerer bug: spread of unknown shape ${recArm.shapeId}`,
+            );
+          fenceAccessorSpreadSource(lowerer, prop, srcShape);
+          if (srcShape.indexValue || shape.indexValue) {
+            const fallback = dynSpreadLiteral(lowerer, expr, type);
+            if (fallback) return fallback;
             lowerer.unsupported(
               "SC1090",
               prop,
-              `spread of '${f.name}' over an earlier conditional spread (the desugar keeps one entry per name — restructure so each name has one contributor)`,
+              "object spread involving index-signature shapes (overflow keys are runtime state — copy the fields you need explicitly)",
             );
           }
-          const fRead = (present = false): IrExpr => ({
-            kind: "recordGet",
-            obj: present ? srcPresent() : srcNarrowed(),
-            shapeId: recArm.shapeId,
-            field: f.name,
-            type: f.type,
-            loc: locOf(prop),
-          });
-          let cond: IrExpr = {
-            kind: "unionIsTag",
+          const laterNames = new Set<string>();
+          for (const later of expr.properties.nodes.slice(
+            expr.properties.nodes.indexOf(prop) + 1,
+          )) {
+            if (ts.isSpreadAssignment(later)) {
+              if (conditionalSpreadOf(later.expression) || andSpreadOf(lowerer, later.expression))
+                continue;
+              const lt = laterSpreadType(lowerer, later.expression);
+              if (lt?.kind === "record") {
+                // A field the later source may lack defines nothing.
+                for (const lf of lowerer.shapes.get(lt.shapeId)?.fields ?? [])
+                  if (!canLackField(lf.type)) laterNames.add(lf.name);
+              }
+              continue;
+            }
+            if (
+              later.name &&
+              (ts.isIdentifier(later.name) ||
+                ts.isStringLiteral(later.name) ||
+                ts.isNumericLiteral(later.name) ||
+                (ts.isComputedPropertyName(later.name) &&
+                  literalComputedKey(lowerer, later.name) !== null))
+            ) {
+              laterNames.add(propNameText(lowerer, later.name));
+            }
+          }
+          const srcRef = (): IrExpr => srcLowered ?? lowerer.lowerExpr(srcNode);
+          const srcNarrowed = (): IrExpr => ({
+            kind: "unionNarrow",
             unionId: srcType.unionId,
             tag: recTag,
-            negated: false,
             value: srcRef(),
-            type: BOOL,
-            loc: locOf(prop),
-          };
-          let thenVal: IrExpr;
-          // A source field that can be absent copies only when present.
-          const fieldPresent = (): IrExpr => ({
-            kind: "logical",
-            op: "&&",
-            left: cond,
-            right: {
-              kind: "recordHas",
-              obj: {
-                kind: "unionNarrow",
-                unionId: srcType.unionId,
-                tag: recTag,
-                value: srcRef(),
-                type: recArm,
-                loc: locOf(prop),
-              },
-              shapeId: recArm.shapeId,
-              field: f.name,
-              type: BOOL,
-              loc: locOf(prop),
-            },
-            type: BOOL,
+            type: recArm,
             loc: locOf(prop),
           });
-          const canBeAbsent =
-            f.type.kind === "union" && lowerer.armTag(f.type.unionId, UNDEFINED_T) >= 0;
-          if (typeEquals(f.type, targetType)) {
-            thenVal = fRead();
-            if (canBeAbsent) cond = fieldPresent();
-          } else if (
-            f.type.kind === "union" &&
-            lowerer.armTag(f.type.unionId, UNDEFINED_T) >= 0 &&
-            typeEquals(lowerer.stripUndefinedArm(f.type), targetType)
-          ) {
-            // Optional source field into a required target slot: present
-            // means the source holds the record AND the field its value
-            // arm — the spread-override completion, union-source form.
-            const ftUndef = lowerer.armTag(f.type.unionId, UNDEFINED_T);
-            cond = {
+          // The source PROVEN present: the checked extraction `x!` lowers to
+          // (narrowedArmHelper + checkedNarrowCall). A required target field
+          // with no earlier contributor has no absent representation, so
+          // `{ ...maybeRecord }` into it must find the record: the unit arm
+          // throws the catchable TypeError instead of leaving the slot unset
+          // (divergence 38's lying-assertion stance — the checker typed the
+          // spread's fields optional, so only a cast or an unchecked indexed
+          // read reaches this shape).
+          const srcPresent = (): IrExpr => {
+            const helper = lowerer.narrowedArmHelper(srcType.unionId, recArm, locOf(prop));
+            return helper
+              ? lowerer.checkedNarrowCall(helper, srcRef(), recArm, locOf(prop))
+              : srcNarrowed();
+          };
+          orderSegments.push({ kind: "spread", shapeId: recArm.shapeId, maybeAbsent: true });
+          for (const f of srcShape.fields) {
+            if (laterNames.has(f.name)) continue;
+            const targetType = fieldTypes.get(f.name);
+            // No slot on the target shape: the copy DROPS the field
+            // (divergence 36's stance, same as the plain-record spread).
+            if (!targetType) continue;
+            if (conditionalNames.has(f.name)) {
+              const conditionalDyn = conditionalFallback();
+              if (conditionalDyn) return conditionalDyn;
+              lowerer.unsupported(
+                "SC1090",
+                prop,
+                `spread of '${f.name}' over an earlier conditional spread (the desugar keeps one entry per name — restructure so each name has one contributor)`,
+              );
+            }
+            const fRead = (present = false): IrExpr => ({
+              kind: "recordGet",
+              obj: present ? srcPresent() : srcNarrowed(),
+              shapeId: recArm.shapeId,
+              field: f.name,
+              type: f.type,
+              loc: locOf(prop),
+            });
+            let cond: IrExpr = {
+              kind: "unionIsTag",
+              unionId: srcType.unionId,
+              tag: recTag,
+              negated: false,
+              value: srcRef(),
+              type: BOOL,
+              loc: locOf(prop),
+            };
+            let thenVal: IrExpr;
+            // A source field that can be absent copies only when present.
+            const fieldPresent = (): IrExpr => ({
               kind: "logical",
               op: "&&",
               left: cond,
               right: {
-                kind: "unionIsTag",
-                unionId: f.type.unionId,
-                tag: ftUndef,
-                negated: true,
-                value: fRead(),
+                kind: "recordHas",
+                obj: {
+                  kind: "unionNarrow",
+                  unionId: srcType.unionId,
+                  tag: recTag,
+                  value: srcRef(),
+                  type: recArm,
+                  loc: locOf(prop),
+                },
+                shapeId: recArm.shapeId,
+                field: f.name,
                 type: BOOL,
                 loc: locOf(prop),
               },
               type: BOOL,
               loc: locOf(prop),
-            };
-            const ftDef = lowerer.unions.get(f.type.unionId);
-            if (targetType.kind === "union") {
-              const retag = lowerer.unionRetagHelper(
-                f.type.unionId,
-                targetType.unionId,
-                locOf(prop),
-              );
-              if (!retag) {
+            });
+            const canBeAbsent =
+              f.type.kind === "union" && lowerer.armTag(f.type.unionId, UNDEFINED_T) >= 0;
+            if (typeEquals(f.type, targetType)) {
+              thenVal = fRead();
+              if (canBeAbsent) cond = fieldPresent();
+            } else if (
+              f.type.kind === "union" &&
+              lowerer.armTag(f.type.unionId, UNDEFINED_T) >= 0 &&
+              typeEquals(lowerer.stripUndefinedArm(f.type), targetType)
+            ) {
+              // Optional source field into a required target slot: present
+              // means the source holds the record AND the field its value
+              // arm — the spread-override completion, union-source form.
+              const ftUndef = lowerer.armTag(f.type.unionId, UNDEFINED_T);
+              cond = {
+                kind: "logical",
+                op: "&&",
+                left: cond,
+                right: {
+                  kind: "unionIsTag",
+                  unionId: f.type.unionId,
+                  tag: ftUndef,
+                  negated: true,
+                  value: fRead(),
+                  type: BOOL,
+                  loc: locOf(prop),
+                },
+                type: BOOL,
+                loc: locOf(prop),
+              };
+              const ftDef = lowerer.unions.get(f.type.unionId);
+              if (targetType.kind === "union") {
+                const retag = lowerer.unionRetagHelper(
+                  f.type.unionId,
+                  targetType.unionId,
+                  locOf(prop),
+                );
+                if (!retag) {
+                  lowerer.pushDiag(
+                    recordShapeMismatchDiag(
+                      lowerer.fmt(type),
+                      lowerer.fmt(recArm),
+                      locOf(prop),
+                      `spread field '${f.name}': '${lowerer.fmt(f.type)}' cannot re-tag into '${lowerer.fmt(targetType)}' behind the present-test`,
+                    ),
+                  );
+                  throw new PoisonError();
+                }
+                thenVal = {
+                  kind: "call",
+                  callee: retag,
+                  args: [fRead()],
+                  type: targetType,
+                  loc: locOf(prop),
+                };
+              } else if (
+                ftDef &&
+                ftDef.arms.length === 2 &&
+                lowerer.armTag(f.type.unionId, targetType) >= 0
+              ) {
+                thenVal = {
+                  kind: "unionNarrow",
+                  unionId: f.type.unionId,
+                  tag: lowerer.armTag(f.type.unionId, targetType),
+                  value: fRead(),
+                  type: targetType,
+                  loc: locOf(prop),
+                };
+              } else {
                 lowerer.pushDiag(
                   recordShapeMismatchDiag(
                     lowerer.fmt(type),
                     lowerer.fmt(recArm),
                     locOf(prop),
-                    `spread field '${f.name}': '${lowerer.fmt(f.type)}' cannot re-tag into '${lowerer.fmt(targetType)}' behind the present-test`,
+                    `spread field '${f.name}': '${lowerer.fmt(f.type)}' cannot narrow into '${lowerer.fmt(targetType)}' behind the present-test`,
                   ),
                 );
                 throw new PoisonError();
               }
-              thenVal = {
-                kind: "call",
-                callee: retag,
-                args: [fRead()],
-                type: targetType,
-                loc: locOf(prop),
-              };
-            } else if (
-              ftDef &&
-              ftDef.arms.length === 2 &&
-              lowerer.armTag(f.type.unionId, targetType) >= 0
-            ) {
-              thenVal = {
-                kind: "unionNarrow",
-                unionId: f.type.unionId,
-                tag: lowerer.armTag(f.type.unionId, targetType),
-                value: fRead(),
-                type: targetType,
-                loc: locOf(prop),
-              };
             } else {
-              lowerer.pushDiag(
-                recordShapeMismatchDiag(
-                  lowerer.fmt(type),
-                  lowerer.fmt(recArm),
-                  locOf(prop),
-                  `spread field '${f.name}': '${lowerer.fmt(f.type)}' cannot narrow into '${lowerer.fmt(targetType)}' behind the present-test`,
-                ),
-              );
-              throw new PoisonError();
-            }
-          } else {
-            // The width-lift fallback (arm wrap, re-tag, nested
-            // reshape) — the same per-field rule the slot coercion
-            // applies. Runs AFTER the optional-completion branch: a
-            // present-test has its own semantics a re-tag's stranded
-            // undefined trap must not shadow.
-            const lift = lowerer.widthLiftPlan(f.type, targetType);
-            if (!lift) {
-              lowerer.pushDiag(
-                recordShapeMismatchDiag(
-                  lowerer.fmt(type),
-                  lowerer.fmt(recArm),
-                  locOf(prop),
-                  `spread field '${f.name}': '${lowerer.fmt(f.type)}' does not lift into '${lowerer.fmt(targetType)}'`,
-                ),
-              );
-              throw new PoisonError();
-            }
-            thenVal = lowerer.applyWidthLift(lift, fRead(), targetType, locOf(prop));
-            if (canBeAbsent) cond = fieldPresent();
-          }
-          const at = fields.findIndex((x) => x.name === f.name);
-          const elseVal =
-            at >= 0 ? fields[at]!.value : lowerer.absentFieldValue(targetType, locOf(prop));
-          if (!elseVal) {
-            if (canBeAbsent) {
-              // The FIELD itself can be missing from a present source:
-              // no extraction makes it exist.
-              lowerer.unsupported(
-                "SC1090",
-                prop,
-                `object spread of '${lowerer.fmt(srcType)}' sources where '${f.name}' has no earlier contributor (the absent arm leaves the required field unset — spread defaults first: { ...defaults, ...overrides })`,
-              );
-            }
-            // No earlier contributor and the target slot cannot be absent:
-            // the source must be here. Copy through the checked extraction
-            // (the absent unit arm throws) — the same read the width lift
-            // below wraps, so a lift still applies.
-            let strict = fRead(true);
-            if (!typeEquals(f.type, targetType)) {
+              // The width-lift fallback (arm wrap, re-tag, nested
+              // reshape) — the same per-field rule the slot coercion
+              // applies. Runs AFTER the optional-completion branch: a
+              // present-test has its own semantics a re-tag's stranded
+              // undefined trap must not shadow.
               const lift = lowerer.widthLiftPlan(f.type, targetType);
               if (!lift) {
                 lowerer.pushDiag(
@@ -2180,21 +2158,56 @@ export function lowerObjectLiteral(
                 );
                 throw new PoisonError();
               }
-              strict = lowerer.applyWidthLift(lift, strict, targetType, locOf(prop));
+              thenVal = lowerer.applyWidthLift(lift, fRead(), targetType, locOf(prop));
+              if (canBeAbsent) cond = fieldPresent();
             }
-            fields.push({ name: f.name, value: strict });
-            continue;
+            const at = fields.findIndex((x) => x.name === f.name);
+            const elseVal =
+              at >= 0 ? fields[at]!.value : lowerer.absentFieldValue(targetType, locOf(prop));
+            if (!elseVal) {
+              if (canBeAbsent) {
+                // The FIELD itself can be missing from a present source:
+                // no extraction makes it exist.
+                lowerer.unsupported(
+                  "SC1090",
+                  prop,
+                  `object spread of '${lowerer.fmt(srcType)}' sources where '${f.name}' has no earlier contributor (the absent arm leaves the required field unset — spread defaults first: { ...defaults, ...overrides })`,
+                );
+              }
+              // No earlier contributor and the target slot cannot be absent:
+              // the source must be here. Copy through the checked extraction
+              // (the absent unit arm throws) — the same read the width lift
+              // below wraps, so a lift still applies.
+              let strict = fRead(true);
+              if (!typeEquals(f.type, targetType)) {
+                const lift = lowerer.widthLiftPlan(f.type, targetType);
+                if (!lift) {
+                  lowerer.pushDiag(
+                    recordShapeMismatchDiag(
+                      lowerer.fmt(type),
+                      lowerer.fmt(recArm),
+                      locOf(prop),
+                      `spread field '${f.name}': '${lowerer.fmt(f.type)}' does not lift into '${lowerer.fmt(targetType)}'`,
+                    ),
+                  );
+                  throw new PoisonError();
+                }
+                strict = lowerer.applyWidthLift(lift, strict, targetType, locOf(prop));
+              }
+              fields.push({ name: f.name, value: strict });
+              continue;
+            }
+            const merged: IrExpr = {
+              kind: "ternary",
+              cond,
+              then: thenVal,
+              else_: elseVal,
+              type: targetType,
+              loc: locOf(prop),
+            };
+            if (at >= 0) fields[at] = { name: f.name, value: merged };
+            else fields.push({ name: f.name, value: merged });
           }
-          const merged: IrExpr = {
-            kind: "ternary",
-            cond,
-            then: thenVal,
-            else_: elseVal,
-            type: targetType,
-            loc: locOf(prop),
-          };
-          if (at >= 0) fields[at] = { name: f.name, value: merged };
-          else fields.push({ name: f.name, value: merged });
         }
         continue;
       }
@@ -2620,6 +2633,32 @@ export function lowerObjectLiteral(
     : { kind: "seqExpr", stmts: spreadStmts, result, type, loc };
 }
 
+/** A spread source whose stored union holds several record arms while the
+ * checker narrowed this site to fewer (`if (b?.type === "tool") ({ ...b })`
+ * on an element read, or a type predicate's arm): extract the narrowed
+ * value through the CHECKED narrowing, so every arm the checker excludes,
+ * including a hidden absence arm, throws the catchable TypeError instead of
+ * being copied. Null when the stored union has at most one record arm (the
+ * present-test desugar owns that case), when the site type is not a
+ * narrowing of the stored union, or in JavaScript files. */
+function checkedSpreadSource(lowerer: Lowerer, node: ts.Expression, stored: IrExpr): IrExpr | null {
+  if (stored.type.kind !== "union") return null;
+  if (isJsSourceFile(ts.getSourceFileOfNode(node))) return null;
+  const def = lowerer.unions.get(stored.type.unionId);
+  if (!def || def.arms.filter((arm) => arm.kind === "record").length < 2) return null;
+  const site = lowerer.mapTypeOf(lowerer.typeOf(node));
+  if (!site || typeEquals(site, stored.type)) return null;
+  const loc = stored.loc;
+  if (site.kind === "record") {
+    if (lowerer.armTag(stored.type.unionId, site) < 0) return null;
+    const helper = lowerer.narrowedArmHelper(stored.type.unionId, site, loc);
+    return helper ? lowerer.checkedNarrowCall(helper, stored, site, loc) : null;
+  }
+  if (site.kind !== "union") return null;
+  const helper = lowerer.narrowedRetagHelper(node, stored.type.unionId, site.unionId, loc);
+  return helper ? { kind: "call", callee: helper, args: [stored], type: site, loc } : null;
+}
+
 /** The field type is an array, or a union with exactly one array arm. */
 function singleArrayArm(lowerer: Lowerer, type: IrType): boolean {
   if (type.kind === "array") return true;
@@ -2752,6 +2791,20 @@ function lowerUnionRecordClone(lowerer: Lowerer, expr: ts.ObjectLiteralExpressio
           loc: source.loc,
         };
     }
+  }
+  // Any other source (a capture, a runtime-optional binding, a member
+  // read) converts through the same checked re-tag: the arms the site's
+  // checker type excludes, a hidden absence arm included, throw the
+  // catchable TypeError instead of being cloned.
+  if (!typeEquals(source.type, sourceType) && source.type.kind === "union") {
+    const helper = lowerer.narrowedRetagHelper(
+      spread.expression,
+      source.type.unionId,
+      sourceType.unionId,
+      source.loc,
+    );
+    if (helper)
+      source = { kind: "call", callee: helper, args: [source], type: sourceType, loc: source.loc };
   }
   if (!typeEquals(source.type, sourceType)) {
     lowerer.unsupported(
