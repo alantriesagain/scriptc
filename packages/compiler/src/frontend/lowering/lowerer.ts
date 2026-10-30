@@ -58,7 +58,7 @@ import {
   setActiveNodeIslands,
   type NodeIslandSet,
 } from "../../node-islands/boundary.js";
-import type { IslandModuleBinding } from "./lower-node-island.js";
+import type { IslandBinding, IslandModuleBinding } from "./lower-node-island.js";
 import { bindingSymbolOfRead, onlyForwarded, stripTypeWrappers } from "./typed-arguments.js";
 import {
   needsGeneralNodeStreams,
@@ -3697,6 +3697,12 @@ export class Lowerer {
   readonly globalsList: IrGlobal[] = [];
 
   readonly npmInitActions = new Map<ts.SourceFile, Map<ts.Statement, IrStmt[]>>();
+  /** Per-file %init statements of static island imports and re-exports,
+   * by the import or export statement that loads the island module: the
+   * importer's %init header runs them in that statement's place among its
+   * dependencies' %init calls, so the island module evaluates in source
+   * order with the native dependencies around it. */
+  readonly islandImportActions = new Map<ts.SourceFile, Map<ts.Statement, IrStmt[]>>();
   /** Per-file %init PRELUDE statements for JSON imports: bakeable DATA
    * assignments with no observable evaluation order of their own —
    * prepended by lowerFileInit so the bindings are live before any
@@ -3793,6 +3799,9 @@ export class Lowerer {
   readonly nodeIslandLoads: { literal: IrExpr & { kind: "strLit" }; path: string }[] = [];
   /** Island handle bindings by symbol (lower-node-island.ts). */
   readonly islandHandleBindings = new Map<ts.Symbol, boolean>();
+  /** Names a native module re-exports from an island package, by the
+   * symbol an alias chain reaches (lower-node-island.ts). */
+  readonly islandReexports = new Map<ts.Symbol, IslandBinding>();
   /** `instanceof` expressions the island lowering already handles. */
   readonly islandInstanceofHandled = new Set<ts.Node>();
   /** NI-6: the modules shared with Node islands (lower-shared-modules.ts),
@@ -4418,6 +4427,7 @@ export class Lowerer {
       checkedTable("globalsByDeclNode", () => this.globalsByDeclNode.size),
       checkedTable("globalsList", () => this.globalsList.length),
       checkedTable("npmInitActions", () => this.npmInitActions.size),
+      checkedTable("islandImportActions", () => this.islandImportActions.size),
       checkedTable("jsonInitActions", () => this.jsonInitActions.size),
       checkedTable("jsonRequireModules", () => this.jsonRequireModules.size),
       checkedTable("jsonRequireCalls", () => this.jsonRequireCalls.size),
@@ -4592,6 +4602,9 @@ export class Lowerer {
     // NI-5: whether a symbol names an island handle binding depends only on
     // its declaration, so the answer is a memo keyed by symbol.
     "islandHandleBindings",
+    // The island names native modules re-export: a pure function of the
+    // program's modules, collected before lowering begins.
+    "islandReexports",
     // The modules shared with the islands (NI-6): a pure function of the
     // program's modules, computed once, and the TDZ flags its plan gives a
     // statement.
