@@ -7775,10 +7775,15 @@ function lowerBranchSwitch(
  *   === "string"/"number"/"boolean"`), reads under a proven narrow
  *   (caughtRead bridges them with caughtNarrow, verified at run time like
  *   unionNarrow), and rethrow (`throw e`). Unsupported raw uses and
- *   assignments are fenced (SC1063 and friends); destructuring patterns
- *   are SC1062. Captures retain the snapshot beyond the catch scope.
- *   The `: any` / `: unknown` annotations tsc admits both
- *   lower the same way (tsc narrows either through the tests).
+ *   assignments are fenced (SC1063 and friends). The `: any` /
+ *   `: unknown` annotations tsc admits both lower the same way (tsc
+ *   narrows either through the tests). Captures retain the snapshot
+ *   beyond the catch scope.
+ * - `catch ([a])` / `catch ({ p })` binds the thrown value through a
+ *   destructuring pattern: the exception cell keeps its hidden CAUGHT
+ *   local, and the pattern reads its checked-dynamic view
+ *   (caughtToDyn), so a JS catch parameter that destructures lowers the
+ *   way the same pattern does over an `any` source.
  * - `finally` runs on normal completion, exception paths, and every
  *   abrupt completion that crosses it. Return values are snapshotted
  *   before cleanup; an abrupt completion inside the finally replaces the
@@ -7791,9 +7796,6 @@ export function lowerTry(lowerer: Lowerer, stmt: ts.TryStatement): IrStmt {
   let catchLocalId: string | null = null;
   if (stmt.catchClause) {
     const vd = stmt.catchClause.variableDeclaration;
-    if (vd && !ts.isIdentifier(vd.name)) {
-      lowerer.unsupported("SC1062", vd);
-    }
     if (vd && ts.isIdentifier(vd.name)) {
       lowerer.scopes.push(new Map());
       try {
@@ -7804,7 +7806,61 @@ export function lowerTry(lowerer: Lowerer, stmt: ts.TryStatement): IrStmt {
         lowerer.scopes.pop();
       }
     } else {
-      catchBody = lowerer.lowerScopedBlock(stmt.catchClause.block);
+      lowerer.scopes.push(new Map());
+      try {
+        if (vd) {
+          // `catch ([a])` / `catch ({ a })`: the thrown value crosses into
+          // the checked-dynamic tree and the pattern binds through the same
+          // per-read fences a dyn source takes — GetIterator for an array
+          // pattern (positions past the end bind undefined, an iterator
+          // with values left closes) and RequireObjectCoercible plus keyed
+          // reads for an object pattern. The hidden CAUGHT local is the
+          // exception cell every other catch path binds; the dyn conversion
+          // is its identity-preserving view (caughtToDyn).
+          const loc = locOf(vd);
+          const local = lowerer.declareHiddenLocal("%caught", CAUGHT);
+          catchLocalId = local.id;
+          const tmp = lowerer.declareHiddenLocal("%destr", DYN);
+          const out: IrStmt[] = [
+            {
+              kind: "varDecl",
+              localId: tmp.id,
+              init: { kind: "caughtToDyn", value: varRef(local.id, CAUGHT, loc), type: DYN, loc },
+              loc,
+            },
+          ];
+          if (ts.isObjectBindingPattern(vd.name)) {
+            // V8 spells the catch parameter's source '.catch' in the
+            // RequireObjectCoercible TypeError ("Cannot destructure
+            // property 'a' of '.catch' as it is null."), except when the
+            // first element has a default: V8 reads that key first, so a
+            // nullish source throws the read's TypeError instead.
+            const check: IrExpr | null = firstReadsWithDefault(vd.name)
+              ? firstKeyRead(lowerer, vd.name, () => varRef(tmp.id, DYN, loc), loc)
+              : {
+                  kind: "dynDestrCheck",
+                  value: varRef(tmp.id, DYN, loc),
+                  spelling: ".catch",
+                  ...firstPatternProp(lowerer, vd.name),
+                  type: DYN,
+                  loc,
+                };
+            if (check !== null) out.push({ kind: "exprStmt", expr: check, loc });
+          }
+          lowerer.lowerBindingPattern(
+            vd.name as ts.ArrayBindingPattern | ts.ObjectBindingPattern,
+            () => varRef(tmp.id, DYN, loc),
+            DYN,
+            true, // catch bindings are mutable
+            out,
+          );
+          catchBody = [...out, ...lowerer.lowerScopedBlock(stmt.catchClause.block)];
+        } else {
+          catchBody = lowerer.lowerScopedBlock(stmt.catchClause.block);
+        }
+      } finally {
+        lowerer.scopes.pop();
+      }
     }
   }
   const finallyBody = stmt.finallyBlock ? lowerer.lowerScopedBlock(stmt.finallyBlock) : null;
