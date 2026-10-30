@@ -3129,8 +3129,10 @@ function listenerReadsThis(lowerer: Lowerer, node: ts.Expression): boolean {
   if (ts.isFunctionExpression(listener)) return functionUsesThis(listener);
   if (ts.isIdentifier(listener)) {
     const decls = lowerer.checker.getSymbolAtLocation(listener)?.declarations ?? [];
-    const fn = decls.find(ts.isFunctionDeclaration);
-    if (fn !== undefined) return functionUsesThis(fn);
+    // An overloaded function's implementation is the declaration with a
+    // body; its overload signatures have none.
+    const fn = decls.find((d) => ts.isFunctionDeclaration(d) && d.body !== undefined);
+    if (fn !== undefined) return functionUsesThis(fn as ts.FunctionDeclaration);
     const binding = decls.find(ts.isVariableDeclaration);
     let init = binding?.initializer;
     while (init !== undefined && ts.isParenthesizedExpression(init)) init = init.expression;

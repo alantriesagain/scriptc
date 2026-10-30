@@ -9,6 +9,17 @@ ee.on("a", function (this: EventEmitter, x: number) {
 });
 ee.emit("a", 1);
 
+// An overloaded function listener: the implementation reads `this`.
+function onLabel(this: EventEmitter, value: string): void;
+function onLabel(this: EventEmitter, value: number): void;
+function onLabel(this: EventEmitter, value: string | number): void {
+  console.log("overloaded", value, this === ee, this.listenerCount("label"));
+}
+ee.on("label", onLabel);
+const labelOf = (n: number): string | number => (n > 0 ? n : "x");
+ee.emit("label", labelOf(0));
+ee.emit("label", labelOf(2));
+
 class Counter extends EventEmitter {
   n = 0;
 }
