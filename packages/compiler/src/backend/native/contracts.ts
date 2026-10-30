@@ -302,9 +302,9 @@ export interface CcOptions {
    * exact link line. */
   watchFile?: boolean;
   /** A typed fs read whose bytes value the program can observe as a Buffer
-   * (moduleUsesFsBufferBrand on the IR): compiles scr_lib.c's
+   * (the fsBufferBrand feature on the IR): compiles scr_lib.c's
    * SCR_FS_BUFFER_BRAND build, so programs that never see the brand keep the
-   * default object byte for byte. */
+   * default object unchanged. */
   fsBufferBrand?: boolean;
   /** The executable manifest has a format-5 foreign callback descriptor:
    * compiles the MPSC queue/self-pipe unit. Other FFI and non-FFI binaries

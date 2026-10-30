@@ -288,4 +288,59 @@ describe("runtime feature snapshots", () => {
     });
     expect(moduleRuntimeFeatures(observationOnly).fsBufferBrand).toBe(false);
   });
+
+  test("reaches bytes through nested and recursive declarations", () => {
+    const bytes = { kind: "bytes" as const, elem: "u8" as const };
+    const boxedShape = (records: NonNullable<IrModule["records"]>, shapeId: string): IrModule => {
+      const mod = module();
+      mod.functions[0]!.body.push({
+        kind: "exprStmt",
+        loc,
+        expr: { kind: "libCall", fn: "fs.readFileSyncBytes", args: [], type: bytes, loc },
+      });
+      mod.records = records;
+      const shape = { kind: "record" as const, shapeId };
+      mod.functions[0]!.locals.push({ id: "shape", name: "shape", mutable: false, type: shape });
+      mod.functions[0]!.body.push({
+        kind: "exprStmt",
+        loc,
+        expr: {
+          kind: "dynFrom",
+          type: DYN,
+          loc,
+          value: { kind: "varRef", localId: "shape", type: shape, loc },
+        },
+      });
+      return mod;
+    };
+    // A record holding a record that holds bytes.
+    const nested = boxedShape(
+      [
+        { id: "r0", fields: [{ name: "inner", type: { kind: "record", shapeId: "r1" } }] },
+        { id: "r1", fields: [{ name: "data", type: bytes }] },
+      ],
+      "r0",
+    );
+    expect(moduleRuntimeFeatures(nested).fsBufferBrand).toBe(true);
+    // A record that refers to itself and holds bytes.
+    const recursive = boxedShape(
+      [
+        {
+          id: "r0",
+          fields: [
+            { name: "next", type: { kind: "record", shapeId: "r0" } },
+            { name: "data", type: bytes },
+          ],
+        },
+      ],
+      "r0",
+    );
+    expect(moduleRuntimeFeatures(recursive).fsBufferBrand).toBe(true);
+    // A record cycle that never reaches bytes.
+    const empty = boxedShape(
+      [{ id: "r0", fields: [{ name: "next", type: { kind: "record", shapeId: "r0" } }] }],
+      "r0",
+    );
+    expect(moduleRuntimeFeatures(empty).fsBufferBrand).toBe(false);
+  });
 });
