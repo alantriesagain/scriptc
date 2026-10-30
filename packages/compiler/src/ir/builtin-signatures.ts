@@ -3842,9 +3842,10 @@ function buildLibFnSignatures() {
      * arms (ERR_INVALID_THIS receivers, ERR_MISSING_ARGS arity ladders,
      * the symbol-to-string TypeError): args are [error-kind f64 (the
      * SCR_ERR_* index: 0 Error, 1 TypeError, 2 RangeError), code (empty =
-     * no code slot), message]. ALWAYS THROWS catchably; the result type is
-     * the replaced expression's own (never materialized — the
-     * global.undefRead pattern). May-throw seed. */
+     * no code slot), message], and optionally a fourth string, the error's
+     * own `url` property (ir/validate.ts accepts it). ALWAYS THROWS
+     * catchably; the result type is the replaced expression's own (never
+     * materialized — the global.undefRead pattern). May-throw seed. */
     "error.nodeThrow": { argTypes: [F64, STRING, STRING], result: VOID },
     /** JS ToString over a dyn value WITH the object protocol (a user
      * toString/valueOf member is CALLED and its throw propagates;
