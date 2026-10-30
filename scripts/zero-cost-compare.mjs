@@ -406,7 +406,9 @@ export const ICU_CPP_NAMESPACE = "6icu_78";
  * spells `6icu_78` wherever the name occurs — as the function's own
  * namespace (`_ZN6icu_78...`), in its parameter types, in vtables, typeinfo
  * and guard variables, or in a libc++ instantiation over an ICU type. No
- * symbol outside the archive carries either mark.
+ * symbol outside the archive carries either mark, except emitted program
+ * functions (`sc_` names), whose numbered helpers can end in `_78`
+ * (`sc_f__x25_dyn_class_property_78`); the suffix test skips them.
  *
  * scr_intl.c's own functions are deliberately not tested by name. The
  * engine-free Intl paths share their prefix (`scr_intl_num_format_en_us` in
@@ -420,7 +422,9 @@ export function icuSymbols(names) {
   return [...new Set(names)]
     .filter(
       (name) =>
-        name.endsWith("_78") || name.includes(ICU_CPP_NAMESPACE) || name.startsWith("icudt78"),
+        (name.endsWith("_78") && !name.startsWith("sc_")) ||
+        name.includes(ICU_CPP_NAMESPACE) ||
+        name.startsWith("icudt78"),
     )
     .sort();
 }
