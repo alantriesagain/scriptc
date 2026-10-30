@@ -1929,6 +1929,82 @@ function importMetaProperty(lowerer: Lowerer, expr: ts.PropertyAccessExpression)
 export const DEFERRED_READ_MESSAGE =
   "undefined is not representable in the target union (a value narrowed or asserted past it still held it)";
 
+/** A collection method read as a VALUE (`s.add`, `m.has` — the `f.call(x)`
+ * tests and callback plumbing): the runtime's interned prototype function
+ * for that name, which applies the method to its own receiver and throws
+ * Node's brand-check TypeError when that receiver is not a collection of
+ * the right kind. Only JavaScript sources take this path: a typed source
+ * keeps its refusal (the checker's Set/Map signature has no value form).
+ * The receiver expression still runs for its effects, and a receiver the
+ * checker typed with an undefined arm (an out-of-bounds element of a
+ * `Set[]`, `xs[1].has`) throws Node's TypeError at the read itself: the
+ * member access on a nullish receiver fails before any method exists. */
+function dynCollectionMethodValue(
+  lowerer: Lowerer,
+  expr: ts.PropertyAccessExpression,
+  prototype: "Map" | "Set",
+  name: string,
+): IrExpr {
+  const loc = locOf(expr);
+  const method: IrExpr = {
+    kind: "libCall",
+    fn: "dyn.builtinMethod",
+    args: [
+      { kind: "strLit", value: prototype, type: STRING, loc },
+      { kind: "strLit", value: name, type: STRING, loc: locOf(expr.name) },
+    ],
+    type: DYN,
+    loc,
+  };
+  const receiver = lowerer.lowerExpr(expr.expression);
+  const unionType = receiver.type.kind === "union" ? receiver.type : null;
+  const units: { tag: number; unit: "null" | "undefined" }[] = [];
+  if (unionType) {
+    const def = lowerer.unions.get(unionType.unionId);
+    def?.arms.forEach((arm, tag) => {
+      if (isUnitType(arm)) units.push({ tag, unit: arm.kind === "nullT" ? "null" : "undefined" });
+    });
+  }
+  if (units.length === 0 || unionType === null) {
+    return isSafeToDiscard(receiver)
+      ? method
+      : {
+          kind: "seqExpr",
+          stmts: [{ kind: "exprStmt", expr: receiver, loc: locOf(expr.expression) }],
+          result: method,
+          type: DYN,
+          loc,
+        };
+  }
+  const held = lowerer.declareHiddenLocal("%collectionMethodReceiver", unionType);
+  let result: IrExpr = method;
+  for (const { tag, unit } of units) {
+    result = {
+      kind: "ternary",
+      cond: {
+        kind: "unionIsTag",
+        unionId: unionType.unionId,
+        tag,
+        negated: false,
+        value: varRef(held.id, unionType, loc),
+        type: BOOL,
+        loc,
+      },
+      then: nodeThrowExpr(1, "", `Cannot read properties of ${unit} (reading '${name}')`, DYN, loc),
+      else_: result,
+      type: DYN,
+      loc,
+    };
+  }
+  return {
+    kind: "seqExpr",
+    stmts: [{ kind: "varDecl", localId: held.id, init: receiver, loc }],
+    result,
+    type: DYN,
+    loc,
+  };
+}
+
 /** Property access on a string or array receiver: `.length` lowers to the
  * matching intrinsic; a bare method reference (`const f = s.slice` — a
  * function value) is rejected with a specific message. Returns null for
@@ -2657,6 +2733,8 @@ export function lowerIntrinsicProperty(
       };
     }
     if (MAP_METHODS.has(name) || name === "forEach") {
+      if (isJsSourceFile(ts.getSourceFileOfNode(expr)) && !expr.questionDotToken)
+        return dynCollectionMethodValue(lowerer, expr, "Map", name);
       lowerer.unsupported("SC1090", expr, `Map methods as values (call '${name}' directly)`);
     }
     return null;
@@ -2676,6 +2754,8 @@ export function lowerIntrinsicProperty(
       };
     }
     if (SET_METHODS.has(name)) {
+      if (isJsSourceFile(ts.getSourceFileOfNode(expr)) && !expr.questionDotToken)
+        return dynCollectionMethodValue(lowerer, expr, "Set", name);
       lowerer.unsupported("SC1090", expr, `Set methods as values (call '${name}' directly)`);
     }
     return null;
