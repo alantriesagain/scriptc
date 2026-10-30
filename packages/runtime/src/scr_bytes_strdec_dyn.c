@@ -17,11 +17,9 @@
 static ScrBytes *scr_strdec_dyn_view(const ScrDyn *chunk, bool *is_string) {
   *is_string = chunk->kind == SCR_DYN_STR;
   if (*is_string) return NULL;
-  if (
-      chunk->kind == SCR_DYN_TYPED_REF || chunk->kind == SCR_DYN_BYTES ||
-      scr_buffer_storage_is(chunk)) {
+  /* An ArrayBuffer or SharedArrayBuffer is not a view: Node throws. */
+  if (chunk->kind == SCR_DYN_TYPED_REF || chunk->kind == SCR_DYN_BYTES)
     return scr_bytes_buffer_source(chunk);
-  }
   scr_dyn_arg_type_fail("buf", "an instance of Buffer, TypedArray, or DataView", chunk);
   return NULL;
 }

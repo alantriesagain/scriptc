@@ -10,6 +10,7 @@ import {
   type IrExpr,
   STRING,
   type SrcLoc,
+  VOID,
   arrayOf,
   isUnitType,
 } from "../../../ir/ir.js";
@@ -65,8 +66,9 @@ export function lowerReflectCall(
   // Reflect.has(target, key) — the `in` operator's presence query over
   // the target's checked-dynamic view (own and inherited names, proxy
   // `has` traps included). A primitive target is Node's TypeError
-  // ("Reflect.has called on non-object"), which the presence query
-  // answers false for instead: fenced, never silently divergent.
+  // ("Reflect.has called on non-object"): a statically primitive target
+  // is refused, and a target held as any, unknown or a union is checked
+  // at run time (dyn.reflectHasTarget).
   if (
     reflectMember === "has" &&
     call.arguments.nodes.length === 2 &&
@@ -85,13 +87,44 @@ export function lowerReflectCall(
       );
     if (!lowerer.dynConvertible(target.type))
       lowerer.noLowering("Reflect.has on this target", call.arguments.nodes[0]!);
+    const key = lowerer.lowerExprExpecting(call.arguments.nodes[1]!, DYN);
+    if (target.type.kind !== "dyn" && target.type.kind !== "union") {
+      return {
+        kind: "libCall",
+        fn: "dyn.hasKeyComputed",
+        args: [lowerer.coerceToExpected(target, DYN), key],
+        type: BOOL,
+        loc,
+      };
+    }
+    // A target held as any, unknown or a union may be a primitive at run
+    // time: both arguments are evaluated, then the target is checked.
+    const targetLocal = lowerer.declareHiddenLocal("%reflectHasTarget", DYN);
+    const keyLocal = lowerer.declareHiddenLocal("%reflectHasKey", DYN);
+    const targetRef = varRef(targetLocal.id, DYN, loc);
     return {
-      kind: "libCall",
-      fn: "dyn.hasKeyComputed",
-      args: [
-        lowerer.coerceToExpected(target, DYN),
-        lowerer.lowerExprExpecting(call.arguments.nodes[1]!, DYN),
+      kind: "seqExpr",
+      stmts: [
+        {
+          kind: "varDecl",
+          localId: targetLocal.id,
+          init: lowerer.coerceToExpected(target, DYN),
+          loc,
+        },
+        { kind: "varDecl", localId: keyLocal.id, init: key, loc },
+        {
+          kind: "exprStmt",
+          expr: { kind: "libCall", fn: "dyn.reflectHasTarget", args: [targetRef], type: VOID, loc },
+          loc,
+        },
       ],
+      result: {
+        kind: "libCall",
+        fn: "dyn.hasKeyComputed",
+        args: [targetRef, varRef(keyLocal.id, DYN, loc)],
+        type: BOOL,
+        loc,
+      },
       type: BOOL,
       loc,
     };

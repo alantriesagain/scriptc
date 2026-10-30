@@ -5347,7 +5347,12 @@ double scr_process_rows(double fd) { return scr_process_dimension(fd, true); }
  * setRawMode(false) restores the termios saved at the first raw entry
  * (libuv's orig_termios), a no-op when raw mode was never entered.
  * NON-TTY stdin: Node's process.stdin is a Socket with no setRawMode
- * member at all, so the call throws Node's exact catchable TypeError. */
+ * member at all, so the call throws Node's exact catchable TypeError.
+ * A TTY call records the mode for process.stdin.isRaw. */
+static SCR_TL bool scr_stdin_raw;
+
+bool scr_process_stdin_raw(void) { return scr_stdin_raw; }
+
 #ifdef _WIN32
 static SCR_TL DWORD scr_stdin_cooked;
 static SCR_TL bool scr_stdin_cooked_saved = false;
@@ -5358,6 +5363,7 @@ void scr_process_stdin_set_raw_mode(bool raw) {
     scr_throw_error_msg(SCR_ERR_TYPE, msg, sizeof msg - 1);
     return;
   }
+  scr_stdin_raw = raw;
   /* libuv's uv_tty_set_mode(UV_TTY_MODE_RAW) console half: drop line
    * buffering, echo, and Ctrl-C cooking; restore the entry mode on the
    * way back — the termios save/restore shape, translated. */
@@ -5391,6 +5397,7 @@ void scr_process_stdin_set_raw_mode(bool raw) {
     scr_throw_error_msg(SCR_ERR_TYPE, msg, sizeof msg - 1);
     return;
   }
+  scr_stdin_raw = raw;
   if (raw) {
     struct termios t;
     if (tcgetattr(0, &t) != 0) return;

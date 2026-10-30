@@ -1092,7 +1092,6 @@ static const char *const scr_stdio_names[] = {
 #endif
 static SCR_TL ScrDyn *scr_stdio_methods[STDIO_METHOD_COUNT];
 static SCR_TL bool scr_stdio_initialized;
-static SCR_TL bool scr_stdio_raw;
 
 static ScrDyn *scr_stdio_refusal(const char *name) {
   char message[192];
@@ -1524,7 +1523,7 @@ static ScrDyn *scr_stdio_method(ScrClosure *cb, ScrDyn *const *args, size_t argc
     result = scr_stdio_read(arg);
   } else if (stream->fd == 0 && method == STDIO_RAW) {
     scr_process_stdin_set_raw_mode(scr_dyn_truthy(arg));
-    if (!scr_exc_pending()) { scr_stdio_raw = scr_dyn_truthy(arg); result = scr_dyn_retain(self); }
+    if (!scr_exc_pending()) result = scr_dyn_retain(self);
 #ifdef SCR_STDIO_EXTENDED
   } else if (stream->fd == 0 && method == STDIO_SET_ENCODING) {
     ScrStr *enc = scr_strdec_encoding(arg);
@@ -1555,7 +1554,7 @@ static ScrDyn *scr_stdio_get(void *ptr, const char *key, size_t length) {
   if (stream->fd == 0 && length == 14 && memcmp(key, "readableLength", 14) == 0)
     return scr_dyn_new_num((double)scr_stdin_buffered);
   if (stream->fd == 0 && length == 5 && memcmp(key, "isRaw", 5) == 0)
-    return scr_process_is_tty(0) ? scr_dyn_new_bool(scr_stdio_raw) : scr_dyn_retain(scr_dyn_undefined());
+    return scr_process_is_tty(0) ? scr_dyn_new_bool(scr_process_stdin_raw()) : scr_dyn_retain(scr_dyn_undefined());
   if (stream->fd == 0 && length == 9 && memcmp(key, "destroyed", 9) == 0) return scr_dyn_new_bool(scr_stdin_destroyed);
   if (length == 3 && memcmp(key, "off", 3) == 0) return scr_dyn_retain(scr_stdio_methods[STDIO_OFF]);
   if (length == 11 && memcmp(key, "addListener", 11) == 0) return scr_dyn_retain(scr_stdio_methods[STDIO_ON]);
@@ -1827,7 +1826,7 @@ void scr_process_on_exit(ScrClosure *cb /*moves*/, void (*fn)(ScrClosure *, doub
 double scr_process_stdin_is_raw(void) {
   if (!scr_context_is_main()) return -1;
   if (!scr_process_is_tty(0)) return -1;
-  return scr_stdio_raw ? 1.0 : 0.0;
+  return scr_process_stdin_raw() ? 1.0 : 0.0;
 }
 
 /* process.prependListener("exit", cb): the same listener in FRONT of the

@@ -401,6 +401,8 @@ bool scr_process_is_tty(double fd);
 bool scr_process_is_tty_value(const ScrDyn *fd);
 void scr_process_stdin_destroy(void);
 void scr_process_stdin_set_raw_mode(bool raw);
+/* The mode the last TTY setRawMode call set (process.stdin.isRaw). */
+bool scr_process_stdin_raw(void);
 
 /* Terminal width for process.stdout/stderr.columns (fd 1/2):
  * ioctl(TIOCGWINSZ), -1 when the fd is not a TTY or the ioctl refuses —

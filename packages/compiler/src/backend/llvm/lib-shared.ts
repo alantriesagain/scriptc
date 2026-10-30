@@ -1151,6 +1151,7 @@ export const LIB_FN_SYMS: Record<string, string> = {
   "dyn.keyDelete": "scr_dyn_key_delete",
   "dyn.keyDeleteComputed": "scr_dyn_key_delete_computed",
   "dyn.reflectDeleteProperty": "scr_dyn_reflect_delete_property",
+  "dyn.reflectHasTarget": "scr_dyn_reflect_has_target",
   "dyn.hasKeyComputed": "scr_dyn_has_key_computed",
   "dyn.hasOwnComputed": "scr_dyn_has_own_computed",
   "dyn.propertyIsEnumerableComputed": "scr_dyn_property_is_enumerable_computed",

@@ -44,3 +44,28 @@ try {
   const err = e as Error;
   console.log(err.name, (err as NodeJS.ErrnoException).code, err.message);
 }
+// end(undefined) only flushes; null is not a chunk.
+const flushed = new StringDecoder("utf8");
+console.log(JSON.stringify(write(flushed, Buffer.from([0x61, 0xe2, 0x82]))));
+console.log(JSON.stringify(endWith(flushed, undefined)));
+try {
+  endWith(new StringDecoder("utf8"), null);
+} catch (e) {
+  const err = e as Error;
+  console.log(err.name, (err as NodeJS.ErrnoException).code, err.message);
+}
+// An ArrayBuffer or SharedArrayBuffer is not an ArrayBufferView.
+for (const chunk of [new ArrayBuffer(2), new SharedArrayBuffer(2)]) {
+  try {
+    write(new StringDecoder("utf8"), chunk);
+  } catch (e) {
+    const err = e as Error;
+    console.log(err.name, (err as NodeJS.ErrnoException).code, err.message);
+  }
+  try {
+    endWith(new StringDecoder("utf8"), chunk);
+  } catch (e) {
+    const err = e as Error;
+    console.log(err.name, (err as NodeJS.ErrnoException).code, err.message);
+  }
+}

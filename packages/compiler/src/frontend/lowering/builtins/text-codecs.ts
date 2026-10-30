@@ -5,6 +5,7 @@ import { staticTextDecoderEncoding } from "../text-decoder-encoding.js";
 import * as ts from "../../ts7/adapter.js";
 import { type Lowerer } from "../lowerer.js";
 import { locOf } from "../../program.js";
+import { InternalCompilerError } from "../../../errors.js";
 import { defaultAfterUndefined, lowerStaticallyUndefinedArgument } from "../optional-arguments.js";
 import {
   BOOL,
@@ -331,6 +332,30 @@ function stringDecoderHelper(
         },
         loc,
       };
+      // end(undefined) only flushes, as Node's end skips the write when
+      // its chunk is undefined.
+      const [write, next] = body.splice(0, 2, {
+        kind: "varDecl",
+        localId: "s.0",
+        init: { kind: "strLit", value: "", type: STRING, loc },
+        loc,
+      });
+      if (write?.kind !== "varDecl" || write.init === null || next === undefined)
+        throw new InternalCompilerError("StringDecoder.end helper without its write");
+      locals.find((local) => local.id === "s.0")!.mutable = true;
+      body.splice(1, 0, {
+        kind: "if",
+        cond: {
+          kind: "dynTest",
+          test: "undefined",
+          value: varRef("chunk.0", DYN, loc),
+          type: BOOL,
+          loc,
+        },
+        then: [],
+        else_: [{ kind: "assign", localId: "s.0", value: write.init, loc }, next],
+        loc,
+      });
     }
   }
   if (op === "endString" || op === "writeString") {

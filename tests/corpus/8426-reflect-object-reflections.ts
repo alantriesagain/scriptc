@@ -26,3 +26,22 @@ console.log(Object.getOwnPropertyNames(list).length);
 const descriptors = Object.getOwnPropertyDescriptors(record);
 console.log(Object.keys(descriptors).join(","));
 console.log(Object.getOwnPropertySymbols(record).length);
+// A primitive target held as any, unknown or a union throws Node's
+// TypeError; its key is evaluated first.
+function hasThrough(target: unknown, name: string): string {
+  try {
+    return String(Reflect.has(target as any, name));
+  } catch (e) {
+    return `${(e as Error).name}: ${(e as Error).message}`;
+  }
+}
+const loose: any = "text";
+const either: string | { a: number } = Math.random() > 2 ? { a: 1 } : "text";
+console.log(hasThrough(loose, "length"), hasThrough(42, "x"), hasThrough(undefined, "x"));
+console.log(hasThrough({ a: 1 }, "a"), hasThrough(either, "a"));
+let keys = 0;
+try {
+  Reflect.has(loose, String(++keys));
+} catch (e) {
+  console.log((e as Error).name, keys);
+}

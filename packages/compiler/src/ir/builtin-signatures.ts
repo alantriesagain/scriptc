@@ -255,6 +255,8 @@ function buildLibFnSignatures() {
     "dyn.keyDelete": { argTypes: [DYN, STRING, BOOL], result: VOID },
     "dyn.keyDeleteComputed": { argTypes: [DYN, DYN, BOOL], result: VOID },
     "dyn.reflectDeleteProperty": { argTypes: [DYN, DYN], result: BOOL },
+    /** Reflect.has's target check: Node's TypeError for a primitive. */
+    "dyn.reflectHasTarget": { argTypes: [DYN], result: VOID },
     "dyn.hasKeyComputed": { argTypes: [DYN, DYN], result: BOOL },
     "dyn.hasOwnComputed": { argTypes: [DYN, DYN], result: BOOL },
     "dyn.propertyIsEnumerableComputed": { argTypes: [DYN, DYN], result: BOOL },
