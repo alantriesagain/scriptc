@@ -2722,6 +2722,15 @@ ScrStr *scr_insp_dyn(ScrDyn *d, double recurse, double depth) {
       if (d->v.handle.tag == SCR_DYNH_NODE_ISLAND) return scr_ni_inspect(d, recurse, depth);
 #endif
       const ScrDynHandleOps *ops = scr_dyn_handle_ops_of(d);
+      if (ops->inspect_custom_only && !g_custom_inspect) {
+        if (recurse > depth) return insp_bracketed_class(ops->cls);
+        InspBuf out = {0};
+        ib_cstr(&out, "util.inspect of a ");
+        ib_cstr(&out, ops->cls);
+        ib_cstr(&out, " with customInspect: false is not supported yet");
+        scr_throw_error(SCR_ERR_ERROR, ib_take(&out));
+        return scr_str_new("", 0);
+      }
       if (ops->inspect_text)
         return recurse > depth ? insp_bracketed_class(ops->cls) : ops->inspect_text(d->v.handle.ptr);
       if (ops->inspect_view) {

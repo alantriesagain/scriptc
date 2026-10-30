@@ -20,6 +20,7 @@ console.log(util.inspect([decoder, encoder]));
 console.log(util.inspect({ a: { b: { c: decoder, d: encoder } } }));
 console.log(util.inspect(decoder, { depth: -1 }), util.inspect(encoder, { depth: -1 }));
 console.log(util.inspect(configured, { showHidden: false }));
+console.log(util.inspect({ a: { b: { c: decoder, d: encoder } } }, { customInspect: false }));
 console.log(JSON.stringify(util.inspect({ decoder, encoder }, { colors: true })));
 console.log(JSON.stringify(util.inspect({ decoder, encoder }, { colors: true, depth: 0 })));
 console.log(util.inspect({ x: encoder, y: decoder }, { compact: false }));

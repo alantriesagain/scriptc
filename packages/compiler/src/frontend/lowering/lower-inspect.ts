@@ -1376,6 +1376,23 @@ export function typeReachesCustomInspect(lowerer: Lowerer, t: IrType): boolean {
   return walk(t);
 }
 
+/** Whether a `t` value can reach a TextEncoder or TextDecoder, whose
+ * handles print through Node's custom inspectors. */
+function typeReachesTextCodec(lowerer: Lowerer, t: IrType): boolean {
+  const seen = new Set<string>();
+  const walk = (u: IrType): boolean => {
+    const k = typeKey(u);
+    if (seen.has(k)) return false;
+    seen.add(k);
+    if (u.kind === "record") {
+      const shape = lowerer.shapes.get(u.shapeId);
+      if (shape && recordTextCodecClass(shape) !== null) return true;
+    }
+    return typeConstituents(lowerer, u).some(walk);
+  };
+  return walk(t);
+}
+
 /** `%util.inspCustom.<n>(v, r, d): string` — formatValue's custom hook
  * over a class whose instances have a `[util.inspect.custom]` method:
  * with ctx.customInspect set, the method's result (a string re-indented
@@ -3272,41 +3289,65 @@ export function lowerInspectValue(
   // false (console.dir's default), apply around the render when the value
   // can reach a custom method; the previous settings return afterwards.
   const reachesCustom =
-    typeReachesCustomInspect(lowerer, value.type) || typeReachesDyn(lowerer, value.type);
+    typeReachesCustomInspect(lowerer, value.type) ||
+    typeReachesDyn(lowerer, value.type) ||
+    typeReachesTextCodec(lowerer, value.type);
   const depthContext = reachesCustom && depth === Infinity && options.depthKind !== 1;
   const customContext = reachesCustom && !options.customInspect;
   if (depthContext || customContext) {
-    const stmts: IrStmt[] = [];
-    const restore: IrStmt[] = [];
-    const setting = (fn: "insp.customInspect" | "insp.depthKind", arg: IrExpr, type: IrType) => {
-      const previous = lowerer.declareHiddenLocal("%inspectContext", type);
-      const call = (a: IrExpr): IrExpr => ({ kind: "libCall", fn, args: [a], type, loc });
-      stmts.push({ kind: "varDecl", localId: previous.id, init: call(arg), loc });
-      restore.push({ kind: "exprStmt", expr: call(varRef(previous.id, type, loc)), loc });
-    };
-    if (customContext) setting("insp.customInspect", boolLit(false, loc), BOOL);
-    if (depthContext) setting("insp.depthKind", numLit(options.depthKind, loc), F64);
-    const text = lowerer.declareHiddenLocal("%inspectText", STRING);
-    stmts.push({
-      kind: "varDecl",
-      localId: text.id,
-      init: withInspectLayout(
-        lowerer,
-        options,
-        value,
-        "inspect",
-        (input) => inspectExpr(lowerer, value.type, input, numLit(0, loc), numLit(depth, loc), loc),
+    // The settings apply in a lifted function, `(v) => { set; try { return
+    // render(v); } finally { restore; } }`, so the previous ones return on
+    // every exit, an inspection refusal's throw included (a seqExpr cannot
+    // hold the try).
+    const key = `context:${typeKey(value.type)}:${customContext}:${depthContext}:${options.depthKind}:${options.breakLength}:${options.compact}:${options.sorted}:${depth}`;
+    let name = lowerer.inspectHelpers.get(key);
+    if (name === undefined) {
+      name = keyedHelperName(lowerer, "%util.inspContext", key);
+      lowerer.inspectHelpers.set(key, name);
+      const locals: IrLocal[] = [{ id: "v.0", name: "v", type: value.type, mutable: false }];
+      const stmts: IrStmt[] = [];
+      const restore: IrStmt[] = [];
+      const setting = (fn: "insp.customInspect" | "insp.depthKind", arg: IrExpr, type: IrType) => {
+        const previous = `previous.${locals.length}`;
+        locals.push({ id: previous, name: "previous", type, mutable: false });
+        const call = (a: IrExpr): IrExpr => ({ kind: "libCall", fn, args: [a], type, loc });
+        stmts.push({ kind: "varDecl", localId: previous, init: call(arg), loc });
+        restore.push({ kind: "exprStmt", expr: call(varRef(previous, type, loc)), loc });
+      };
+      if (customContext) setting("insp.customInspect", boolLit(false, loc), BOOL);
+      if (depthContext) setting("insp.depthKind", numLit(options.depthKind, loc), F64);
+      const input = varRef("v.0", value.type, loc);
+      stmts.push({
+        kind: "tryCatch",
+        tryBody: [
+          {
+            kind: "return",
+            value: withInspectLayout(
+              lowerer,
+              options,
+              input,
+              "inspect",
+              (v) => inspectExpr(lowerer, value.type, v, numLit(0, loc), numLit(depth, loc), loc),
+              loc,
+            ),
+            loc,
+          },
+        ],
+        catchBody: null,
+        catchLocalId: null,
+        finallyBody: restore.reverse(),
         loc,
-      ),
-      loc,
-    });
-    return {
-      kind: "seqExpr",
-      stmts: [...stmts, ...restore.reverse()],
-      result: varRef(text.id, STRING, loc),
-      type: STRING,
-      loc,
-    };
+      });
+      lowerer.liftedFns.push({
+        name,
+        params: [{ localId: "v.0", name: "v", type: value.type }],
+        returnType: STRING,
+        locals,
+        body: stmts,
+        loc,
+      });
+    }
+    return { kind: "call", callee: name, args: [value], type: STRING, loc };
   }
   if (dir && value.type.kind === "dyn") {
     return withInspectLayout(
