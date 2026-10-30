@@ -24,6 +24,7 @@ import {
   funcOf,
   isUnitType,
   recordTextCodecClass,
+  typeEquals,
 } from "../../../ir/ir.js";
 import { lowerNodeModuleIdentifier } from "../lower-node-module.js";
 import { lowerCjsExportsObjectValue } from "../cjs-exports-object.js";
@@ -1251,7 +1252,14 @@ function closureDynRead(
   if (scopeOf(expr) === scopeOf(decl)) return null;
   const parent = expr.parent;
   const handle = lowerer.unions.get(type.unionId)?.arms.find((arm) => !isUnitType(arm));
-  if (handle && ts.isPropertyAccessExpression(parent) && parent.expression === expr) {
+  // Only a use the checker types as the handle narrows: inside a function
+  // declared before the first write the binding reads as `any`.
+  const typedAsHandle =
+    handle !== undefined && typeEquals(lowerer.mapTypeOf(lowerer.typeOf(expr)) ?? DYN, handle);
+  if (typedAsHandle && ts.isPropertyAccessExpression(parent) && parent.expression === expr) {
+    // An optional read (`c?.address`) tests the tagged value: undefined
+    // short-circuits and the handle arm narrows.
+    if (parent.questionDotToken) return { kind: "varRef", localId: id, type, loc };
     const helper = lowerer.narrowedArmHelper(
       type.unionId,
       handle,

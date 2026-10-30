@@ -4414,6 +4414,7 @@ export class Lowerer {
       checkedTable("preparedClassFactories", () => this.preparedClassFactories.size),
       checkedTable("preparingClassFactories", () => this.preparingClassFactories.size),
       checkedTable("varGlobalEntryInits", () => this.varGlobalEntryInits.size),
+      checkedTable("closureDynLets", () => this.closureDynLets.size),
       checkedTable("cycleInitFlags", () => this.cycleInitFlags.size),
       checkedTable("classInitFlags", () => this.classInitFlags.size),
       checkedTable("cycleInitDeclarations", () => this.cycleInitDeclarations.size),
