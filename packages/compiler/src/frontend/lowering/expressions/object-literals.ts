@@ -3576,6 +3576,28 @@ export function conditionalSpreadOf(
   return { cond: e.condition, props, whenTrue: trueCarries };
 }
 
+/** The record arms of a union spread source of the declared-shape merge,
+ * or null unless every arm is a non-tuple record or the null/undefined
+ * unit and at least one arm is a record. Unit arms contribute nothing:
+ * CopyDataProperties skips nullish sources. */
+function declaredMergeUnionArms(
+  lowerer: Lowerer,
+  unionId: string,
+): { tag: number; shapeId: string; shape: IrRecordShape }[] | null {
+  const def = lowerer.unions.get(unionId);
+  if (!def) return null;
+  const arms: { tag: number; shapeId: string; shape: IrRecordShape }[] = [];
+  for (let tag = 0; tag < def.arms.length; tag++) {
+    const arm = def.arms[tag]!;
+    if (arm.kind === "undefinedT" || arm.kind === "nullT") continue;
+    if (arm.kind !== "record") return null;
+    const armShape = lowerer.shapes.get(arm.shapeId);
+    if (!armShape || armShape.tuple) return null;
+    arms.push({ tag, shapeId: arm.shapeId, shape: armShape });
+  }
+  return arms.length > 0 ? arms : null;
+}
+
 /** `{ ...idx, ...idx2 }` typed a DECLARED shape (no index signature) — the
  * defaults-merge idiom over runtime-keyed sources (`{ ...fromEntries(a),
  * ...fromEntries(b) }` typed AppConfig). Lowers to ONE interned helper
@@ -3591,7 +3613,12 @@ export function conditionalSpreadOf(
  * untyped copy would store the lie) — and a key naming NO declared field
  * is DROPPED (the shape cannot represent it; Node keeps it invisibly —
  * divergence 68). Later contributors overwrite earlier ones
- * (last-write-wins). Fixed, hybrid, and pure index records may contribute. */
+ * (last-write-wins). Fixed, hybrid, and pure index records may contribute,
+ * and so may a union of those records with the null/undefined unit: each
+ * record arm copies through its own shape's helper behind its tag test,
+ * a unit arm copies nothing (CopyDataProperties skips nullish sources),
+ * and the union is held in a hidden local, so it still evaluates once, in
+ * order. */
 function lowerDeclaredSpreadMerge(
   lowerer: Lowerer,
   expr: ts.ObjectLiteralExpression,
@@ -3603,6 +3630,11 @@ function lowerDeclaredSpreadMerge(
     value: IrExpr;
     shapeId: string;
     shape?: IrRecordShape;
+    /** A union source (`{ ...model.compat }` of `R | undefined`): each
+     * record arm copies through its own shape's helper behind its tag
+     * test, and a null or undefined arm copies nothing (CopyDataProperties
+     * skips nullish sources). */
+    arms?: { tag: number; shapeId: string; shape: IrRecordShape }[];
   }
   const srcs: Src[] = [];
   for (const prop of expr.properties.nodes) {
@@ -3611,6 +3643,14 @@ function lowerDeclaredSpreadMerge(
     if (value.type.kind === "dyn") {
       srcs.push({ value, shapeId: "dyn" });
       continue;
+    }
+    if (value.type.kind === "union") {
+      const arms = declaredMergeUnionArms(lowerer, value.type.unionId);
+      if (arms) {
+        for (const arm of arms) fenceAccessorSpreadSource(lowerer, prop, arm.shape);
+        srcs.push({ value, shapeId: "union", arms });
+        continue;
+      }
     }
     const srcShape =
       value.type.kind === "record" ? lowerer.shapes.get(value.type.shapeId) : undefined;
@@ -3763,12 +3803,11 @@ function lowerDeclaredSpreadMerge(
       loc,
     },
   ];
-  for (const source of srcs) {
+  const mergeHelper = (source: Src, sourceType: IrType): string => {
     const key = `declmerge-source:${type.shapeId}:${source.shapeId}`;
     let helper = lowerer.valueHelpers.get(key);
     if (!helper) {
       helper = keyedHelperName(lowerer, "%rec.declmerge", key);
-      const sourceType = source.value.type;
       const destination = varRef("out.0", type, loc);
       const receiver = varRef("source.0", sourceType, loc);
       const locals: IrLocal[] = [
@@ -3952,6 +3991,62 @@ function lowerDeclaredSpreadMerge(
       // leave an entry that a later literal could reuse without a body.
       lowerer.valueHelpers.set(key, helper);
     }
+    return helper;
+  };
+  for (const source of srcs) {
+    if (source.arms && source.value.type.kind === "union") {
+      // Evaluate the union once, then copy the running arm's own keys.
+      const unionType = source.value.type;
+      const held = lowerer.declareHiddenLocal("%declMergeSource", unionType);
+      const heldRef = varRef(held.id, unionType, loc);
+      stmts.push({ kind: "varDecl", localId: held.id, init: source.value, loc });
+      for (const arm of source.arms) {
+        const armType: IrType = { kind: "record", shapeId: arm.shapeId };
+        const helper = mergeHelper(
+          { value: heldRef, shapeId: arm.shapeId, shape: arm.shape },
+          armType,
+        );
+        stmts.push({
+          kind: "if",
+          cond: {
+            kind: "unionIsTag",
+            unionId: unionType.unionId,
+            tag: arm.tag,
+            negated: false,
+            value: heldRef,
+            type: BOOL,
+            loc,
+          },
+          then: [
+            {
+              kind: "exprStmt",
+              expr: {
+                kind: "call",
+                callee: helper,
+                args: [
+                  outRef,
+                  {
+                    kind: "unionNarrow",
+                    unionId: unionType.unionId,
+                    tag: arm.tag,
+                    value: heldRef,
+                    type: armType,
+                    loc,
+                  },
+                ],
+                type,
+                loc,
+              },
+              loc,
+            },
+          ],
+          else_: null,
+          loc,
+        });
+      }
+      continue;
+    }
+    const helper = mergeHelper(source, source.value.type);
     stmts.push({
       kind: "exprStmt",
       expr: { kind: "call", callee: helper, args: [outRef, source.value], type, loc },
