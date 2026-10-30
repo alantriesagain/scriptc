@@ -407,7 +407,15 @@ const SYMBOL_LIB_FNS: ReadonlySet<IrLibFn> = new Set([
 ]);
 
 /** Entry points that link the querystring unit. */
-const QS_LIB_FNS: ReadonlySet<IrLibFn> = new Set(["qs.parse", "qs.stringify", "qs.unescape"]);
+const QS_LIB_FNS: ReadonlySet<IrLibFn> = new Set([
+  "qs.parse",
+  "qs.parseCustom",
+  "qs.stringify",
+  "qs.stringifyCustom",
+  "qs.separator",
+  "qs.unescape",
+  "qs.unescapeBuffer",
+]);
 
 /** Entry points that link the parseArgs unit. */
 const PARSE_ARGS_LIB_FNS: ReadonlySet<IrLibFn> = new Set([
