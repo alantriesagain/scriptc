@@ -5532,6 +5532,23 @@ export function checkPreflightTs7(
   }
 }
 
+/** Whether a declaration file has the runtime file TypeScript pairs it
+ * with (`x.d.ts` with `x.js`, `x.d.mts` with `x.mjs`, `x.d.cts` with
+ * `x.cjs`): a specifier that resolves to the declaration then still names a
+ * module Node can load. */
+function declarationHasRuntimeFile(declaration: ts.SourceFile): boolean {
+  const name = declaration.fileName;
+  const pairs: [string, string][] = [
+    [".d.ts", ".js"],
+    [".d.mts", ".mjs"],
+    [".d.cts", ".cjs"],
+  ];
+  for (const [declared, runtime] of pairs)
+    if (name.endsWith(declared))
+      return trackedFileExists(name.slice(0, -declared.length) + runtime);
+  return false;
+}
+
 function preflight7(load: LoadResult): {
   diags: ScrDiagnostic[];
   moduleOrder: ts.SourceFile[];
@@ -6065,7 +6082,7 @@ function preflight7(load: LoadResult): {
         // ERR_MODULE_NOT_FOUND), and a declaration file is not a program
         // module: an edge to it would lower the declarations' own imports
         // as code.
-        if (reDep !== null && reDep.isDeclarationFile) {
+        if (reDep !== null && reDep.isDeclarationFile && !declarationHasRuntimeFile(reDep)) {
           diags.push(
             unsupportedDiag(
               "SC1010",
@@ -6271,7 +6288,7 @@ function preflight7(load: LoadResult): {
       // edge would lower its imports as if it were code (SC2013 for every
       // specifier inside a package's `.d.ts`). Type-only imports were
       // already erased above; this is the value form.
-      if (dep !== null && dep.isDeclarationFile && !isJson) {
+      if (dep !== null && dep.isDeclarationFile && !isJson && !declarationHasRuntimeFile(dep)) {
         diags.push(
           unsupportedDiag(
             "SC1010",

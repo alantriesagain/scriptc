@@ -38,3 +38,13 @@ const second = list();
 const sortedNative: string[] = [...first];
 sortedNative.sort();
 console.log(sortedNative.join(","), second.join(","), describe(first));
+
+// A function-local island array captured by an arrow crosses the same way.
+function captured(): string {
+  const local = list();
+  const show = (): string => describe(local);
+  const size = (): number => local.length;
+  const spread = (): string => [...local].join(",");
+  return `${show()} ${size()} ${spread()}`;
+}
+console.log(captured());

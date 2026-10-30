@@ -3225,7 +3225,14 @@ export function lowerFileInit(
       });
       ctx.hoistedFnDecls.add(stmt);
     }
+    const islandActions = lowerer.islandImportActions.get(sf);
+    const islandPlaced = new Set<ts.Statement>();
     for (const { stmt, dep } of orderedImportsOf(lowerer.program, sf)) {
+      const island = islandActions?.get(stmt);
+      if (island !== undefined) {
+        header.push(...island);
+        islandPlaced.add(stmt);
+      }
       const npm = lowerer.npmInitActions.get(sf)?.get(stmt);
       if (npm !== undefined && npm.length > 0) {
         header.push(...npm);
@@ -3294,6 +3301,11 @@ export function lowerFileInit(
         }
       }
     }
+    // An island load whose statement the import order leaves out keeps the
+    // prelude's place.
+    const islandUnplaced: IrStmt[] = [];
+    for (const [stmt, actions] of islandActions ?? [])
+      if (!islandPlaced.has(stmt)) islandUnplaced.push(...actions);
     if (asyncDeps.length === 1) {
       const dep = asyncDeps[0]!;
       const promiseT: IrType = { kind: "promise", inner: VOID };
@@ -3432,7 +3444,7 @@ export function lowerFileInit(
       if (ms && ms.sf === sf) statics.push({ pos: ms.pos, info: c });
     }
     statics.sort((a, b) => a.pos - b.pos);
-    const body = [...header, ...prelude];
+    const body = [...header, ...islandUnplaced, ...prelude];
     let at = 0;
     for (const stmt of stmts) {
       // `<=`: a mixin instantiation's position IS its statement's start

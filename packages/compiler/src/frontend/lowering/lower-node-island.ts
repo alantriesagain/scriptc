@@ -31,6 +31,7 @@ import {
   VOID,
   type IrExpr,
   type IrGlobal,
+  type IrLocal,
   type IrStmt,
   type IrType,
   type SrcLoc,
@@ -390,9 +391,26 @@ function runsAtModuleEvaluation(node: ts.Node): boolean {
   return false;
 }
 
+/** The %init statements that run in `stmt`'s place in its file's %init
+ * header (Lowerer.islandImportActions). */
+function islandStatementActions(lowerer: Lowerer, sf: ts.SourceFile, stmt: ts.Statement): IrStmt[] {
+  let byStatement = lowerer.islandImportActions.get(sf);
+  if (byStatement === undefined) {
+    byStatement = new Map();
+    lowerer.islandImportActions.set(sf, byStatement);
+  }
+  let actions = byStatement.get(stmt);
+  if (actions === undefined) {
+    actions = [];
+    byStatement.set(stmt, actions);
+  }
+  return actions;
+}
+
 /** A static import (or re-export) of an island package: loads the module
- * in the importer's %init prelude. Returns false when `spec` is not an
- * island module. */
+ * in the importer's %init header, in the statement's place among the
+ * dependencies' %init calls, as Node evaluates it in source order. Returns
+ * false when `spec` is not an island module. */
 export function collectIslandImport(
   lowerer: Lowerer,
   sf: ts.SourceFile,
@@ -418,8 +436,7 @@ export function collectIslandImport(
     lowerer.usesNodeIsland = true;
     const exportLoc = locOf(stmt);
     const exported = islandModuleGlobal(lowerer, path);
-    const initActions = lowerer.jsonInitActions.get(sf) ?? [];
-    lowerer.jsonInitActions.set(sf, initActions);
+    const initActions = islandStatementActions(lowerer, sf, stmt);
     initActions.push({
       kind: "assign",
       localId: exported.global.id,
@@ -446,8 +463,7 @@ export function collectIslandImport(
   lowerer.usesNodeIsland = true;
   const loc = locOf(stmt);
   const binding = islandModuleGlobal(lowerer, path);
-  const actions = lowerer.jsonInitActions.get(sf) ?? [];
-  lowerer.jsonInitActions.set(sf, actions);
+  const actions = islandStatementActions(lowerer, sf, stmt);
   actions.push({
     kind: "assign",
     localId: binding.global.id,
@@ -1499,6 +1515,16 @@ function lowerIslandChain(
   return stmts.length > 0 ? { kind: "seqExpr", stmts, result, type: result.type, loc } : result;
 }
 
+/** The local an island handle binding reads here: its own binding, retyped
+ * checked-dynamic, or, inside a closure, the capture of an enclosing
+ * function's binding, which resolveLocal registers. */
+function islandHandleLocal(lowerer: Lowerer, ident: ts.Identifier): IrLocal | null {
+  const origin = lowerer.peekLocal(ident);
+  if (origin === null) return null;
+  origin.type = DYN;
+  return lowerer.resolveLocal(ident);
+}
+
 /** Expressions on island values (the lowerExpr hook; null: not an island
  * expression, the ordinary lowering applies). */
 export function lowerIslandExpr(lowerer: Lowerer, expr: ts.Expression): IrExpr | null {
@@ -1527,7 +1553,7 @@ export function lowerIslandExpr(lowerer: Lowerer, expr: ts.Expression): IrExpr |
           expr,
         );
       lowerer.usesNodeIsland = true;
-      const slot = lowerer.globalOf(expr) ?? lowerer.peekLocal(expr);
+      const slot = lowerer.globalOf(expr) ?? islandHandleLocal(lowerer, expr);
       if (slot === null) return null; // the local is declared dyn
       slot.type = DYN;
       const ref = varRef(slot.id, DYN, loc);
