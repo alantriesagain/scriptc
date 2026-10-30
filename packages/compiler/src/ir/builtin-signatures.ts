@@ -5063,6 +5063,10 @@ function buildLibFnSignatures() {
     /** A runtime encoding argument's canonical name (Node's normalizeEncoding:
      * nullish and "" are utf8); an unknown name throws ERR_UNKNOWN_ENCODING. */
     "strdec.encoding": { argTypes: [DYN], result: STRING },
+    /** The same for an encoding that may not be a string (scr_inspect.c):
+     * an object whose `length` is 3 to 9 matches by its string in lower
+     * case; other values throw ERR_UNKNOWN_ENCODING formatted with %s. */
+    "strdec.encodingValue": { argTypes: [DYN], result: STRING },
     // node:readline: the interface handle is f64; the callbacks' func types
     // are program-dependent (the emitter picks the adapter by parameter
     // count), so those slots are null like child.onExit's.

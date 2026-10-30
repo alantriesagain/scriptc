@@ -627,6 +627,7 @@ export const LIB_FN_SYMS: Record<string, string> = {
   "strdec.next": "scr_strdec_next",
   "strdec.end": "scr_strdec_end",
   "strdec.encoding": "scr_strdec_encoding",
+  "strdec.encodingValue": "scr_strdec_encoding_value",
   "stats.isFile": "scr_stats_is_file",
   "stats.isDirectory": "scr_stats_is_dir",
   "stats.isSymbolicLink": "scr_stats_is_symlink",
