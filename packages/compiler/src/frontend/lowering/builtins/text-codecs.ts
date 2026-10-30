@@ -5,6 +5,7 @@ import { staticTextDecoderEncoding } from "../text-decoder-encoding.js";
 import * as ts from "../../ts7/adapter.js";
 import { type Lowerer } from "../lowerer.js";
 import { locOf } from "../../program.js";
+import { InternalCompilerError } from "../../../errors.js";
 import { defaultAfterUndefined, lowerStaticallyUndefinedArgument } from "../optional-arguments.js";
 import {
   BOOL,
@@ -121,6 +122,24 @@ export function lowerStringDecoderMethodCall(
       loc,
     };
   }
+  // A chunk that crossed the checked-dynamic boundary (a stream "data"
+  // payload): the runtime answers Node's write — strings pass through
+  // unchanged, ArrayBufferViews decode, anything else throws
+  // ERR_INVALID_ARG_TYPE.
+  if (chunk.type.kind === "dyn") {
+    return {
+      kind: "call",
+      callee: stringDecoderHelper(
+        lowerer,
+        name === "end" ? "endDyn" : "writeDyn",
+        receiver.type.shapeId,
+        loc,
+      ),
+      args: [receiver, chunk],
+      type: STRING,
+      loc,
+    };
+  }
   chunk = checkedOptionalBuiltinArm(lowerer, chunk, BYTES_U8) ?? chunk;
   if (chunk.type.kind === "bytes" && chunk.type.elem !== "u8") {
     chunk = {
@@ -165,8 +184,6 @@ function stringDecoderHelper(
   const key = `strdec.${op}`;
   const existing = lowerer.valueHelpers.get(key);
   if (existing) return existing;
-  if (op === "writeDyn" || op === "endDyn")
-    return stringDecoderDynHelper(lowerer, op, key, shapeId, loc);
   const name = keyedHelperName(lowerer, `%strdec.${op}`, key);
   lowerer.valueHelpers.set(key, name);
   const recT: IrType = { kind: "record", shapeId };
@@ -252,6 +269,100 @@ function stringDecoderHelper(
       { kind: "return", value: varRef("s.0", STRING, loc), loc },
     ];
   }
+  if (op === "writeDyn" || op === "endDyn") {
+    const dynChunk = { localId: "chunk.0", name: "chunk", type: DYN };
+    params.push(dynChunk);
+    locals.splice(1, 0, { id: "chunk.0", name: "chunk", type: DYN, mutable: false });
+    const writeDyn: IrExpr = {
+      kind: "libCall",
+      fn: "strdec.writeDyn",
+      args: [encRead(), pendingRead(), varRef("chunk.0", DYN, loc)],
+      type: STRING,
+      loc,
+    };
+    body = [
+      { kind: "varDecl", localId: "s.0", init: writeDyn, loc },
+      {
+        kind: "recordSet",
+        obj: varRef("d.0", recT, loc),
+        shapeId,
+        field: "%pending",
+        value: {
+          kind: "libCall",
+          fn: "strdec.nextDyn",
+          args: [encRead(), pendingRead(), varRef("chunk.0", DYN, loc)],
+          type: F64,
+          loc,
+        },
+        loc,
+      },
+      { kind: "return", value: varRef("s.0", STRING, loc), loc },
+    ];
+    if (op === "endDyn") {
+      // end(buf) is write(buf) followed by the flush of whatever the write
+      // left buffered (Node's end).
+      locals.push({ id: "tail.0", name: "tail", type: STRING, mutable: false });
+      body.splice(
+        body.length - 1,
+        0,
+        {
+          kind: "varDecl",
+          localId: "tail.0",
+          init: {
+            kind: "libCall",
+            fn: "strdec.end",
+            args: [encRead(), pendingRead()],
+            type: STRING,
+            loc,
+          },
+          loc,
+        },
+        {
+          kind: "recordSet",
+          obj: varRef("d.0", recT, loc),
+          shapeId,
+          field: "%pending",
+          value: { kind: "numLit", value: 0, type: F64, loc },
+          loc,
+        },
+      );
+      body[body.length - 1] = {
+        kind: "return",
+        value: {
+          kind: "strConcat",
+          left: varRef("s.0", STRING, loc),
+          right: varRef("tail.0", STRING, loc),
+          type: STRING,
+          loc,
+        },
+        loc,
+      };
+      // end(undefined) only flushes, as Node's end skips the write when
+      // its chunk is undefined.
+      const [write, next] = body.splice(0, 2, {
+        kind: "varDecl",
+        localId: "s.0",
+        init: { kind: "strLit", value: "", type: STRING, loc },
+        loc,
+      });
+      if (write?.kind !== "varDecl" || write.init === null || next === undefined)
+        throw new InternalCompilerError("StringDecoder.end helper without its write");
+      locals.find((local) => local.id === "s.0")!.mutable = true;
+      body.splice(1, 0, {
+        kind: "if",
+        cond: {
+          kind: "dynTest",
+          test: "undefined",
+          value: varRef("chunk.0", DYN, loc),
+          type: BOOL,
+          loc,
+        },
+        then: [],
+        else_: [{ kind: "assign", localId: "s.0", value: write.init, loc }, next],
+        loc,
+      });
+    }
+  }
   if (op === "endString" || op === "writeString") {
     const inputT = STRING;
     params.push({ localId: "chunk.0", name: "chunk", type: inputT });
@@ -310,76 +421,6 @@ function stringDecoderHelper(
     };
   }
   lowerer.liftedFns.push({ name, params, returnType: STRING, locals, body, loc });
-  return name;
-}
-
-/** The %strdec helpers of a chunk known only at run time (Node's write and
- * end): a string passes through write unchanged, and end returns it
- * followed by the flushed partial; an ArrayBufferView decodes as a u8 view
- * of its bytes; end(undefined) only flushes; any other value throws
- * ERR_INVALID_ARG_TYPE (strdec.view). */
-function stringDecoderDynHelper(
-  lowerer: Lowerer,
-  op: "writeDyn" | "endDyn",
-  key: string,
-  shapeId: string,
-  loc: SrcLoc,
-): string {
-  const name = keyedHelperName(lowerer, `%strdec.${op}`, key);
-  lowerer.valueHelpers.set(key, name);
-  const recT: IrType = { kind: "record", shapeId };
-  const d = (): IrExpr => varRef("d.0", recT, loc);
-  const chunk = (): IrExpr => varRef("chunk.0", DYN, loc);
-  const call = (helper: Parameters<typeof stringDecoderHelper>[1], args: IrExpr[]): IrExpr => ({
-    kind: "call",
-    callee: stringDecoderHelper(lowerer, helper, shapeId, loc),
-    args,
-    type: STRING,
-    loc,
-  });
-  const text: IrExpr = { kind: "dynCheck", value: chunk(), type: STRING, loc };
-  const view: IrExpr = { kind: "libCall", fn: "strdec.view", args: [chunk()], type: BYTES_U8, loc };
-  const isString: IrExpr = { kind: "dynTest", test: "string", value: chunk(), type: BOOL, loc };
-  const body: IrStmt[] = [];
-  if (op === "endDyn")
-    body.push({
-      kind: "if",
-      cond: { kind: "dynTest", test: "undefined", value: chunk(), type: BOOL, loc },
-      then: [{ kind: "return", value: call("end", [d()]), loc }],
-      else_: null,
-      loc,
-    });
-  body.push(
-    {
-      kind: "if",
-      cond: isString,
-      then: [
-        {
-          kind: "return",
-          value:
-            op === "endDyn" ? call("endString", [d(), text]) : call("writeString", [d(), text]),
-          loc,
-        },
-      ],
-      else_: null,
-      loc,
-    },
-    { kind: "return", value: call(op === "endDyn" ? "endChunk" : "write", [d(), view]), loc },
-  );
-  lowerer.liftedFns.push({
-    name,
-    params: [
-      { localId: "d.0", name: "d", type: recT },
-      { localId: "chunk.0", name: "chunk", type: DYN },
-    ],
-    returnType: STRING,
-    locals: [
-      { id: "d.0", name: "d", type: recT, mutable: false },
-      { id: "chunk.0", name: "chunk", type: DYN, mutable: false },
-    ],
-    body,
-    loc,
-  });
   return name;
 }
 
