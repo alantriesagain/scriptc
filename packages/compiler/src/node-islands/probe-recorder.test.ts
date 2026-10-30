@@ -72,3 +72,25 @@ test("the probe never evaluates the program's own source", () => {
   expect(existsSync(join(root, "src/evaluated-program"))).toBe(false);
   expect(existsSync(join(root, "src/evaluated-shared"))).toBe(false);
 });
+
+test("a package that catches the refusal does not defer, nor does one that loads it later", () => {
+  const root = project({
+    "src/config.js": marker("config"),
+    "node_modules/catches/package.json": '{ "name": "catches" }',
+    "node_modules/catches/index.js":
+      'let config;\ntry { config = require("../../src/config.js"); } catch { config = { fallback: true }; }\nmodule.exports = config;\n',
+    "node_modules/later/package.json": '{ "name": "later" }',
+    "node_modules/later/index.js": 'module.exports = { config: require("catches") };\n',
+    "node_modules/clean/package.json": '{ "name": "clean" }',
+    "node_modules/clean/index.js": "module.exports = { ok: true };\n",
+  });
+  const results = probe(root, [
+    join(root, "node_modules/catches/index.js"),
+    join(root, "node_modules/later/index.js"),
+    join(root, "node_modules/clean/index.js"),
+  ]);
+  const refusal = `the build does not evaluate ${join(root, "src/config.js")}, a file of the program`;
+  expect(results.map((r) => r.throws)).toEqual([refusal, refusal, undefined]);
+  expect(results.map((r) => r.root === undefined)).toEqual([true, true, false]);
+  expect(existsSync(join(root, "src/evaluated-config"))).toBe(false);
+});
