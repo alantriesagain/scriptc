@@ -334,6 +334,21 @@ describe("the collected module tree", () => {
     expect(paths.filter((path) => !path.endsWith(".cjs"))).toEqual(["assets/config.json"]);
   });
 
+  test("a joined data path ships even when another directory has a file of that name", () => {
+    const root = project({
+      "src/main.ts": "",
+      "src/loader.cjs":
+        'const { join } = require("node:path");\nrequire("node:fs").readFileSync(join(__dirname, "fallback", "payload.txt"));\n',
+      "src/a-other/payload.txt": "not named by the module\n",
+      "src/fallback/payload.txt": "shipped\n",
+    });
+    const collector = new NodeIslandModuleCollector();
+    expect(collector.add(join(root, "src/main.ts"), "./loader.cjs")).toBeNull();
+    const paths = collector.tree()!.files.map((file) => file.path);
+    expect(paths).toContain("fallback/payload.txt");
+    expect(paths).not.toContain("a-other/payload.txt");
+  });
+
   test("a named file that is only elsewhere in the module's directory is a build error", () => {
     const root = project({
       "src/main.ts": "",

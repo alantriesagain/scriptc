@@ -368,6 +368,8 @@ export class NodeIslandModuleCollector {
       return rel !== "" && !rel.startsWith("..") && !isAbsolute(rel);
     };
     const unresolved: { name: string; at: number }[] = [];
+    /** The names of the files this module's named paths ship. */
+    const shippedNames = new Set<string>();
     for (const [name, at] of namedDataPaths(text)) {
       if (isAbsolute(name) || name.includes("\0")) continue;
       const path = resolve(root, name);
@@ -382,6 +384,7 @@ export class NodeIslandModuleCollector {
       if (target === null || !inside(target)) continue;
       // A link inside the directory stays a link in the tree (placed).
       this.files.add(this.placed(path));
+      shippedNames.add(basename(path));
     }
     if (unresolved.length === 0) return null;
     // The files of the module's directory by name, links leading outside it
@@ -405,9 +408,11 @@ export class NodeIslandModuleCollector {
     };
     walk(root);
     for (const { name, at } of unresolved) {
+      // A name of a file another named path ships (`"payload.txt"` beside
+      // `join(here, "fallback", "payload.txt")`) is not missing, wherever
+      // other files of that name are.
+      if (shippedNames.has(basename(name))) continue;
       const found = byName.get(basename(name));
-      // A file another named path ships (`"payload.txt"` beside
-      // `join(here, "fallback", "payload.txt")`) is not missing.
       if (found === undefined || this.files.has(trackedRealpath(found) ?? found)) continue;
       const line = text.slice(0, at).split("\n").length;
       const there = portable(relative(root, found));
