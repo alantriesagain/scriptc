@@ -97,6 +97,7 @@ import {
 import { identityPreservingWidening } from "./coercions/identity.js";
 import { scanDivergences } from "./divergences.js";
 import { applyKeyOrderWitnesses, KeyOrderNotes } from "./key-order-witness.js";
+import { functionKeepsRecordSources } from "./record-sources.js";
 import { exprFunctionReference } from "../../ir/function-references.js";
 import { everyStmtList, observeRecordLiteralRebuilds } from "../../ir/traverse.js";
 import { checkedClassAssertion } from "./class-assertions.js";
@@ -780,6 +781,8 @@ import type { ExpandoMembers } from "./lower-expando.js";
 import { lowerRecordFieldCall, lowerObjectMethodCall } from "./lower-calls.js";
 import { fenceCrossBlockNsRef, nsPathPrefix } from "./lower-namespaces.js";
 import { isSafeToRepeat } from "./expressions/evaluation-safety.js";
+import { partialAssertionFields } from "./partial-assertions.js";
+import { emptyArrayLiteralArm } from "./expressions/array-literals.js";
 import { lowerTernary } from "./lower-exprs.js";
 import {
   maybePromiseReturnStmt,
@@ -3352,6 +3355,10 @@ export class Lowerer {
   /** The collection types that uses prove for untyped JavaScript bindings,
    * by every identifier naming one (js-collection-types.ts). */
   inferredCollectionTypes: Map<ts.Node, ts.Type> | undefined = undefined;
+  /** Partial record assertions (`partial-assertions.ts`): per target shape,
+   * the required fields some asserted literal leaves unwritten. */
+  partialAssertions: Map<string, { missing: ReadonlySet<string>; text: string }> | undefined =
+    undefined;
   /** overload-choice's answers per call, binding and function. */
   readonly dynamicOverloadAnswers = new Map<ts.Node, boolean>();
   /** Error parameters of an error-first callback with a known value in
@@ -3396,6 +3403,11 @@ export class Lowerer {
    * Reachability lowers inits before the declarations they discover, so
    * these rebuild after the worklist restores historical shape metadata. */
   readonly shapeOrderHelperFinalizers: (() => void)[] = [];
+  /** Whether any lowered function converts a checked-dynamic value into a
+   * closed record, the only conversion that can leave a record holding
+   * undeclared source keys (record-sources.ts). Settled once lowering ends,
+   * before the shape helpers finalize their bodies. */
+  recordSourcesPossible = false;
   /** Construction witnesses that choose each shape's enumeration order
    * once lowering settles (key-order-witness.ts). */
   readonly keyOrder = new KeyOrderNotes();
@@ -4510,6 +4522,7 @@ export class Lowerer {
     "priorRetriedSymbols",
     "wholeSlotDegradation",
     "inferredCollectionTypes",
+    "partialAssertions",
     "foreignElementKeys",
     // caches made when first needed
     "nanCodedReads",
@@ -4554,6 +4567,9 @@ export class Lowerer {
     // statement.
     "sharedModules",
     "sharedInitFlags",
+    // Settled from every lowered function once lowering ends, before the
+    // shape helpers finalize (record-sources.ts).
+    "recordSourcesPossible",
     "slotOriginMemo",
     "recordOriginMemo",
     "boundaryCastOrder",
@@ -10714,6 +10730,22 @@ export class Lowerer {
       ...this.implicitFns,
     ]);
     observeRecordLiteralRebuilds(null);
+    // A program whose functions never convert a checked-dynamic value into a
+    // closed record cannot keep a source view anywhere, so the captures that
+    // consult one keep their static copy (record-sources.ts).
+    const allFunctions = [
+      ...orderedUnits,
+      ...initFunctions,
+      ...instanceFunctions,
+      ...this.liftedFns,
+      ...this.implicitFns,
+    ];
+    const sourceScan = { memo: new Map<string, boolean>(), visiting: new Set<string>() };
+    for (const fn of allFunctions) {
+      if (!functionKeepsRecordSources(this, fn, sourceScan)) continue;
+      this.recordSourcesPossible = true;
+      break;
+    }
     for (const finalize of this.shapeOrderHelperFinalizers) finalize();
     this.settleSharedHelperLocations([
       ...orderedUnits,
@@ -14038,6 +14070,10 @@ export class Lowerer {
             );
           }
         }
+        // An EMPTY literal carries no element to select an arm by: it
+        // builds as the union's first array arm (the emptyArrayLiteralArm
+        // rule the contextual union and the `?? []` default share).
+        if (!arm) arm = emptyArrayLiteralArm(x, arms) ?? undefined;
         if (arm) {
           const built = this.lowerArrayLiteral(
             x,
@@ -14198,7 +14234,47 @@ export class Lowerer {
     if (this.returnsLiteralIntoDyn(node, expected)) return this.lowerExprExpecting(node, expected);
     if (this.returnsFreshCollection(node) && expected.kind !== "void")
       return this.lowerExprExpecting(node, expected);
+    // A fresh object literal into a record result: the same
+    // destination-directed construction. An unannotated method inside a
+    // contextually typed literal is checked against the CONTEXTUAL
+    // signature's result while its own return type stays the literal's
+    // inferred (narrower) record — `ToolDefinition<Schema, Details>`
+    // methods returning `{ content, details }`. Building at the
+    // contextual type would then coerce that wider record into the
+    // declared result and refuse; the result slot is the layout.
+    if (this.returnsFreshRecord(node, expected)) return this.lowerExprExpecting(node, expected);
     return this.asyncReturnValueOf(node, this.lowerExpr(node), expected);
+  }
+
+  /** A fresh object literal returned into a RECORD result whose ordinary
+   * construction cannot reach that result: not a thenable, so it is built
+   * at the result type like a synchronous return. An unannotated method
+   * inside a contextually typed literal is checked against the CONTEXTUAL
+   * signature's result while its own return type stays the literal's
+   * inferred (narrower) record — `ToolDefinition<Schema, Details>` methods
+   * returning `{ content, details }`. Building at the contextual type
+   * would then coerce that wider record into the declared result and
+   * refuse; the result slot is the layout. A literal that declares `then`
+   * is awaited instead, and a literal whose contextual build does convert
+   * keeps the ordinary lowering, so no convertible value changes. */
+  private returnsFreshRecord(node: ts.Expression, expected: IrType): boolean {
+    if (expected.kind !== "record") return false;
+    let e = node;
+    while (ts.isParenthesizedExpression(e)) e = e.expression;
+    if (!ts.isObjectLiteralExpression(e)) return false;
+    if (this.checker.getPropertyOfType(this.typeOf(e), "then") !== undefined) return false;
+    // The record the ordinary path builds: the literal's context, with an
+    // async return's `T | PromiseLike<T>` stripped to the awaited record
+    // (object-literals.ts does the same before mapping).
+    let context = this.checker.getContextualType(e) ?? this.typeOf(e);
+    if (
+      context.isUnionType() &&
+      ts.constituentTypes(context).some((t) => ts.symbolNameOf(t.getSymbol()) === "PromiseLike")
+    )
+      context = this.checker.getAwaitedType(context) ?? context;
+    const built = this.mapTypeOf(context);
+    if (!built || built.kind !== "record") return false;
+    return this.widthLiftPlan(built, expected) === null;
   }
 
   /** An array literal or a `new Map(...)`, `new Set(...)` or `new
@@ -14375,7 +14451,8 @@ export class Lowerer {
     if (
       this.adoptsReturnedPromise() &&
       !this.returnsLiteralIntoDyn(node, expected) &&
-      !this.returnsFreshCollection(node)
+      !this.returnsFreshCollection(node) &&
+      !this.returnsFreshRecord(node, expected)
     ) {
       // The async return lowers its operand untyped first (a promise
       // adopts before its payload converts); a maybe-promise union needs
@@ -14516,6 +14593,10 @@ export class Lowerer {
    * undefined-armed union fields, which can be absent, and `true` for
    * every other declared field. */
   recordFieldPresent(obj: IrExpr, shapeId: string, field: string, loc: SrcLoc): IrExpr {
+    // A partial record view (partial-assertions.ts) can lack a field its
+    // asserted literal never wrote, whatever the field's required type.
+    if (partialAssertionFields(this, shapeId).has(field))
+      return { kind: "recordHas", obj, shapeId, field, type: BOOL, loc };
     const f = this.shapes.get(shapeId)?.fields.find((x) => x.name === field);
     if (f && f.type.kind === "union" && this.armTag(f.type.unionId, UNDEFINED_T) >= 0) {
       return { kind: "recordHas", obj, shapeId, field, type: BOOL, loc };

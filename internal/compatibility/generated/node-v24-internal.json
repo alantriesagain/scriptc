@@ -54788,6 +54788,12 @@
           "tests/corpus/2986-http-static-client-socket-finish.ts",
           "tests/corpus/2987-http-static-timeout-errors.ts",
           "tests/corpus/2988-http-static-client-abort.ts",
+          "tests/corpus/net-paused-socket-exit.cjs",
+          "tests/corpus/net-server-socket-peer-close.cjs",
+          "tests/corpus/net-socket-encoding-pipe.cjs",
+          "tests/corpus/net-socket-method-values.cjs",
+          "tests/corpus/net-socket-set-encoding-names.ts",
+          "tests/corpus/net-socket-write-rejected.cjs",
           "tests/fixtures/server/cases/http-trailers/main.ts",
           "tests/fixtures/server/cases/http2-connect/main.ts",
           "tests/fixtures/server/cases/upgrade-both/main.ts"
@@ -56336,7 +56342,13 @@
         "evidence": "compiler-dedicated:server.close",
         "tests": [
           "tests/corpus/2500-net-autosel-timeout.ts",
-          "tests/corpus/2596-net-arg-ladders.cjs"
+          "tests/corpus/2596-net-arg-ladders.cjs",
+          "tests/corpus/net-socket-set-encoding-names.ts",
+          "tests/corpus/net-socket-write-rejected.cjs",
+          "tests/corpus/net-socket-method-values.cjs",
+          "tests/corpus/net-paused-socket-exit.cjs",
+          "tests/corpus/net-server-socket-peer-close.cjs",
+          "tests/corpus/net-socket-encoding-pipe.cjs"
         ]
       },
       "anchorSource": "exact"
@@ -56419,7 +56431,13 @@
         "evidence": "compiler-dedicated:server.listen",
         "tests": [
           "tests/corpus/2500-net-autosel-timeout.ts",
-          "tests/corpus/2596-net-arg-ladders.cjs"
+          "tests/corpus/2596-net-arg-ladders.cjs",
+          "tests/corpus/net-socket-set-encoding-names.ts",
+          "tests/corpus/net-socket-write-rejected.cjs",
+          "tests/corpus/net-socket-method-values.cjs",
+          "tests/corpus/net-paused-socket-exit.cjs",
+          "tests/corpus/net-server-socket-peer-close.cjs",
+          "tests/corpus/net-socket-encoding-pipe.cjs"
         ]
       },
       "anchorSource": "exact"
@@ -59448,7 +59466,13 @@
           "tests/corpus/2500-net-autosel-timeout.ts",
           "tests/corpus/2596-net-arg-ladders.cjs",
           "tests/corpus/2672-http-request-response-callback.ts",
-          "tests/corpus/2689-http-server-timeout-properties.ts"
+          "tests/corpus/2689-http-server-timeout-properties.ts",
+          "tests/corpus/net-paused-socket-exit.cjs",
+          "tests/corpus/net-server-socket-peer-close.cjs",
+          "tests/corpus/net-socket-encoding-pipe.cjs",
+          "tests/corpus/net-socket-method-values.cjs",
+          "tests/corpus/net-socket-set-encoding-names.ts",
+          "tests/corpus/net-socket-write-rejected.cjs"
         ]
       },
       "anchorSource": "chapter"
@@ -61706,7 +61730,13 @@
         "evidence": "compiler-dedicated:server.close",
         "tests": [
           "tests/corpus/2500-net-autosel-timeout.ts",
-          "tests/corpus/2596-net-arg-ladders.cjs"
+          "tests/corpus/2596-net-arg-ladders.cjs",
+          "tests/corpus/net-socket-set-encoding-names.ts",
+          "tests/corpus/net-socket-write-rejected.cjs",
+          "tests/corpus/net-socket-method-values.cjs",
+          "tests/corpus/net-paused-socket-exit.cjs",
+          "tests/corpus/net-server-socket-peer-close.cjs",
+          "tests/corpus/net-socket-encoding-pipe.cjs"
         ]
       },
       "anchorSource": "exact"
@@ -62014,7 +62044,13 @@
         "evidence": "compiler-dedicated:server.close",
         "tests": [
           "tests/corpus/2500-net-autosel-timeout.ts",
-          "tests/corpus/2596-net-arg-ladders.cjs"
+          "tests/corpus/2596-net-arg-ladders.cjs",
+          "tests/corpus/net-socket-set-encoding-names.ts",
+          "tests/corpus/net-socket-write-rejected.cjs",
+          "tests/corpus/net-socket-method-values.cjs",
+          "tests/corpus/net-paused-socket-exit.cjs",
+          "tests/corpus/net-server-socket-peer-close.cjs",
+          "tests/corpus/net-socket-encoding-pipe.cjs"
         ]
       },
       "anchorSource": "exact"
@@ -63842,7 +63878,13 @@
           "tests/corpus/2500-net-autosel-timeout.ts",
           "tests/corpus/2596-net-arg-ladders.cjs",
           "tests/corpus/2672-http-request-response-callback.ts",
-          "tests/corpus/2689-http-server-timeout-properties.ts"
+          "tests/corpus/2689-http-server-timeout-properties.ts",
+          "tests/corpus/net-paused-socket-exit.cjs",
+          "tests/corpus/net-server-socket-peer-close.cjs",
+          "tests/corpus/net-socket-encoding-pipe.cjs",
+          "tests/corpus/net-socket-method-values.cjs",
+          "tests/corpus/net-socket-set-encoding-names.ts",
+          "tests/corpus/net-socket-write-rejected.cjs"
         ]
       },
       "anchorSource": "chapter"
@@ -63938,7 +63980,13 @@
         "evidence": "compiler-dedicated:server.close",
         "tests": [
           "tests/corpus/2500-net-autosel-timeout.ts",
-          "tests/corpus/2596-net-arg-ladders.cjs"
+          "tests/corpus/2596-net-arg-ladders.cjs",
+          "tests/corpus/net-socket-set-encoding-names.ts",
+          "tests/corpus/net-socket-write-rejected.cjs",
+          "tests/corpus/net-socket-method-values.cjs",
+          "tests/corpus/net-paused-socket-exit.cjs",
+          "tests/corpus/net-server-socket-peer-close.cjs",
+          "tests/corpus/net-socket-encoding-pipe.cjs"
         ]
       },
       "anchorSource": "exact"
@@ -64034,7 +64082,13 @@
         "evidence": "compiler-dedicated:server.listen",
         "tests": [
           "tests/corpus/2500-net-autosel-timeout.ts",
-          "tests/corpus/2596-net-arg-ladders.cjs"
+          "tests/corpus/2596-net-arg-ladders.cjs",
+          "tests/corpus/net-socket-set-encoding-names.ts",
+          "tests/corpus/net-socket-write-rejected.cjs",
+          "tests/corpus/net-socket-method-values.cjs",
+          "tests/corpus/net-paused-socket-exit.cjs",
+          "tests/corpus/net-server-socket-peer-close.cjs",
+          "tests/corpus/net-socket-encoding-pipe.cjs"
         ]
       },
       "anchorSource": "exact"
@@ -72029,6 +72083,12 @@
           "tests/corpus/2672-http-request-response-callback.ts",
           "tests/corpus/2689-http-server-timeout-properties.ts",
           "tests/corpus/5659-net-blocklist-socketaddress.ts",
+          "tests/corpus/net-paused-socket-exit.cjs",
+          "tests/corpus/net-server-socket-peer-close.cjs",
+          "tests/corpus/net-socket-encoding-pipe.cjs",
+          "tests/corpus/net-socket-method-values.cjs",
+          "tests/corpus/net-socket-set-encoding-names.ts",
+          "tests/corpus/net-socket-write-rejected.cjs",
           "tests/fixtures/node-types/net-blocklist.ts"
         ]
       },
@@ -72637,7 +72697,13 @@
         "evidence": "compiler-dedicated:server.address",
         "tests": [
           "tests/corpus/2500-net-autosel-timeout.ts",
-          "tests/corpus/2596-net-arg-ladders.cjs"
+          "tests/corpus/2596-net-arg-ladders.cjs",
+          "tests/corpus/net-socket-set-encoding-names.ts",
+          "tests/corpus/net-socket-write-rejected.cjs",
+          "tests/corpus/net-socket-method-values.cjs",
+          "tests/corpus/net-paused-socket-exit.cjs",
+          "tests/corpus/net-server-socket-peer-close.cjs",
+          "tests/corpus/net-socket-encoding-pipe.cjs"
         ]
       },
       "anchorSource": "exact"
@@ -72659,7 +72725,13 @@
         "evidence": "compiler-dedicated:server.close",
         "tests": [
           "tests/corpus/2500-net-autosel-timeout.ts",
-          "tests/corpus/2596-net-arg-ladders.cjs"
+          "tests/corpus/2596-net-arg-ladders.cjs",
+          "tests/corpus/net-socket-set-encoding-names.ts",
+          "tests/corpus/net-socket-write-rejected.cjs",
+          "tests/corpus/net-socket-method-values.cjs",
+          "tests/corpus/net-paused-socket-exit.cjs",
+          "tests/corpus/net-server-socket-peer-close.cjs",
+          "tests/corpus/net-socket-encoding-pipe.cjs"
         ]
       },
       "anchorSource": "exact"
@@ -72717,7 +72789,13 @@
         "evidence": "compiler-dedicated:server.listen",
         "tests": [
           "tests/corpus/2500-net-autosel-timeout.ts",
-          "tests/corpus/2596-net-arg-ladders.cjs"
+          "tests/corpus/2596-net-arg-ladders.cjs",
+          "tests/corpus/net-socket-set-encoding-names.ts",
+          "tests/corpus/net-socket-write-rejected.cjs",
+          "tests/corpus/net-socket-method-values.cjs",
+          "tests/corpus/net-paused-socket-exit.cjs",
+          "tests/corpus/net-server-socket-peer-close.cjs",
+          "tests/corpus/net-socket-encoding-pipe.cjs"
         ]
       },
       "anchorSource": "exact"
@@ -72739,7 +72817,13 @@
         "evidence": "compiler-dedicated:server.listen",
         "tests": [
           "tests/corpus/2500-net-autosel-timeout.ts",
-          "tests/corpus/2596-net-arg-ladders.cjs"
+          "tests/corpus/2596-net-arg-ladders.cjs",
+          "tests/corpus/net-socket-set-encoding-names.ts",
+          "tests/corpus/net-socket-write-rejected.cjs",
+          "tests/corpus/net-socket-method-values.cjs",
+          "tests/corpus/net-paused-socket-exit.cjs",
+          "tests/corpus/net-server-socket-peer-close.cjs",
+          "tests/corpus/net-socket-encoding-pipe.cjs"
         ]
       },
       "anchorSource": "exact"
@@ -72761,7 +72845,13 @@
         "evidence": "compiler-dedicated:server.listen",
         "tests": [
           "tests/corpus/2500-net-autosel-timeout.ts",
-          "tests/corpus/2596-net-arg-ladders.cjs"
+          "tests/corpus/2596-net-arg-ladders.cjs",
+          "tests/corpus/net-socket-set-encoding-names.ts",
+          "tests/corpus/net-socket-write-rejected.cjs",
+          "tests/corpus/net-socket-method-values.cjs",
+          "tests/corpus/net-paused-socket-exit.cjs",
+          "tests/corpus/net-server-socket-peer-close.cjs",
+          "tests/corpus/net-socket-encoding-pipe.cjs"
         ]
       },
       "anchorSource": "exact"
@@ -72783,7 +72873,13 @@
         "evidence": "compiler-dedicated:server.listen",
         "tests": [
           "tests/corpus/2500-net-autosel-timeout.ts",
-          "tests/corpus/2596-net-arg-ladders.cjs"
+          "tests/corpus/2596-net-arg-ladders.cjs",
+          "tests/corpus/net-socket-set-encoding-names.ts",
+          "tests/corpus/net-socket-write-rejected.cjs",
+          "tests/corpus/net-socket-method-values.cjs",
+          "tests/corpus/net-paused-socket-exit.cjs",
+          "tests/corpus/net-server-socket-peer-close.cjs",
+          "tests/corpus/net-socket-encoding-pipe.cjs"
         ]
       },
       "anchorSource": "exact"
@@ -72805,7 +72901,13 @@
         "evidence": "compiler-dedicated:server.listen",
         "tests": [
           "tests/corpus/2500-net-autosel-timeout.ts",
-          "tests/corpus/2596-net-arg-ladders.cjs"
+          "tests/corpus/2596-net-arg-ladders.cjs",
+          "tests/corpus/net-socket-set-encoding-names.ts",
+          "tests/corpus/net-socket-write-rejected.cjs",
+          "tests/corpus/net-socket-method-values.cjs",
+          "tests/corpus/net-paused-socket-exit.cjs",
+          "tests/corpus/net-server-socket-peer-close.cjs",
+          "tests/corpus/net-socket-encoding-pipe.cjs"
         ]
       },
       "anchorSource": "exact"
@@ -73148,7 +73250,13 @@
         "evidence": "compiler-dedicated:socket.destroy",
         "tests": [
           "tests/corpus/2500-net-autosel-timeout.ts",
-          "tests/corpus/2596-net-arg-ladders.cjs"
+          "tests/corpus/2596-net-arg-ladders.cjs",
+          "tests/corpus/net-socket-set-encoding-names.ts",
+          "tests/corpus/net-socket-write-rejected.cjs",
+          "tests/corpus/net-socket-method-values.cjs",
+          "tests/corpus/net-paused-socket-exit.cjs",
+          "tests/corpus/net-server-socket-peer-close.cjs",
+          "tests/corpus/net-socket-encoding-pipe.cjs"
         ]
       },
       "anchorSource": "exact"
@@ -73188,7 +73296,13 @@
         "evidence": "compiler-dedicated:socket.end",
         "tests": [
           "tests/corpus/2500-net-autosel-timeout.ts",
-          "tests/corpus/2596-net-arg-ladders.cjs"
+          "tests/corpus/2596-net-arg-ladders.cjs",
+          "tests/corpus/net-socket-set-encoding-names.ts",
+          "tests/corpus/net-socket-write-rejected.cjs",
+          "tests/corpus/net-socket-method-values.cjs",
+          "tests/corpus/net-paused-socket-exit.cjs",
+          "tests/corpus/net-server-socket-peer-close.cjs",
+          "tests/corpus/net-socket-encoding-pipe.cjs"
         ]
       },
       "anchorSource": "exact"
@@ -73210,7 +73324,13 @@
         "evidence": "compiler-dedicated:socket.pause",
         "tests": [
           "tests/corpus/2500-net-autosel-timeout.ts",
-          "tests/corpus/2596-net-arg-ladders.cjs"
+          "tests/corpus/2596-net-arg-ladders.cjs",
+          "tests/corpus/net-socket-set-encoding-names.ts",
+          "tests/corpus/net-socket-write-rejected.cjs",
+          "tests/corpus/net-socket-method-values.cjs",
+          "tests/corpus/net-paused-socket-exit.cjs",
+          "tests/corpus/net-server-socket-peer-close.cjs",
+          "tests/corpus/net-socket-encoding-pipe.cjs"
         ]
       },
       "anchorSource": "exact"
@@ -73271,7 +73391,13 @@
         "evidence": "compiler-dedicated:socket.resume",
         "tests": [
           "tests/corpus/2500-net-autosel-timeout.ts",
-          "tests/corpus/2596-net-arg-ladders.cjs"
+          "tests/corpus/2596-net-arg-ladders.cjs",
+          "tests/corpus/net-socket-set-encoding-names.ts",
+          "tests/corpus/net-socket-write-rejected.cjs",
+          "tests/corpus/net-socket-method-values.cjs",
+          "tests/corpus/net-paused-socket-exit.cjs",
+          "tests/corpus/net-server-socket-peer-close.cjs",
+          "tests/corpus/net-socket-encoding-pipe.cjs"
         ]
       },
       "anchorSource": "exact"
@@ -73293,7 +73419,13 @@
         "evidence": "compiler-dedicated:socket.setEncoding",
         "tests": [
           "tests/corpus/2500-net-autosel-timeout.ts",
-          "tests/corpus/2596-net-arg-ladders.cjs"
+          "tests/corpus/2596-net-arg-ladders.cjs",
+          "tests/corpus/net-socket-set-encoding-names.ts",
+          "tests/corpus/net-socket-write-rejected.cjs",
+          "tests/corpus/net-socket-method-values.cjs",
+          "tests/corpus/net-paused-socket-exit.cjs",
+          "tests/corpus/net-server-socket-peer-close.cjs",
+          "tests/corpus/net-socket-encoding-pipe.cjs"
         ]
       },
       "anchorSource": "exact"
@@ -73387,7 +73519,13 @@
         "evidence": "compiler-dedicated:socket.setTimeout",
         "tests": [
           "tests/corpus/2500-net-autosel-timeout.ts",
-          "tests/corpus/2596-net-arg-ladders.cjs"
+          "tests/corpus/2596-net-arg-ladders.cjs",
+          "tests/corpus/net-socket-set-encoding-names.ts",
+          "tests/corpus/net-socket-write-rejected.cjs",
+          "tests/corpus/net-socket-method-values.cjs",
+          "tests/corpus/net-paused-socket-exit.cjs",
+          "tests/corpus/net-server-socket-peer-close.cjs",
+          "tests/corpus/net-socket-encoding-pipe.cjs"
         ]
       },
       "anchorSource": "exact"
@@ -73466,7 +73604,13 @@
         "evidence": "compiler-dedicated:socket.write",
         "tests": [
           "tests/corpus/2500-net-autosel-timeout.ts",
-          "tests/corpus/2596-net-arg-ladders.cjs"
+          "tests/corpus/2596-net-arg-ladders.cjs",
+          "tests/corpus/net-socket-set-encoding-names.ts",
+          "tests/corpus/net-socket-write-rejected.cjs",
+          "tests/corpus/net-socket-method-values.cjs",
+          "tests/corpus/net-paused-socket-exit.cjs",
+          "tests/corpus/net-server-socket-peer-close.cjs",
+          "tests/corpus/net-socket-encoding-pipe.cjs"
         ]
       },
       "anchorSource": "exact"
@@ -74110,7 +74254,13 @@
         "evidence": "compiler-dedicated:net.connect",
         "tests": [
           "tests/corpus/2500-net-autosel-timeout.ts",
-          "tests/corpus/2596-net-arg-ladders.cjs"
+          "tests/corpus/2596-net-arg-ladders.cjs",
+          "tests/corpus/net-socket-set-encoding-names.ts",
+          "tests/corpus/net-socket-write-rejected.cjs",
+          "tests/corpus/net-socket-method-values.cjs",
+          "tests/corpus/net-paused-socket-exit.cjs",
+          "tests/corpus/net-server-socket-peer-close.cjs",
+          "tests/corpus/net-socket-encoding-pipe.cjs"
         ]
       },
       "anchorSource": "exact"
@@ -74132,7 +74282,13 @@
         "evidence": "compiler-dedicated:net.connect",
         "tests": [
           "tests/corpus/2500-net-autosel-timeout.ts",
-          "tests/corpus/2596-net-arg-ladders.cjs"
+          "tests/corpus/2596-net-arg-ladders.cjs",
+          "tests/corpus/net-socket-set-encoding-names.ts",
+          "tests/corpus/net-socket-write-rejected.cjs",
+          "tests/corpus/net-socket-method-values.cjs",
+          "tests/corpus/net-paused-socket-exit.cjs",
+          "tests/corpus/net-server-socket-peer-close.cjs",
+          "tests/corpus/net-socket-encoding-pipe.cjs"
         ]
       },
       "anchorSource": "exact"
@@ -74154,7 +74310,13 @@
         "evidence": "compiler-dedicated:net.connect",
         "tests": [
           "tests/corpus/2500-net-autosel-timeout.ts",
-          "tests/corpus/2596-net-arg-ladders.cjs"
+          "tests/corpus/2596-net-arg-ladders.cjs",
+          "tests/corpus/net-socket-set-encoding-names.ts",
+          "tests/corpus/net-socket-write-rejected.cjs",
+          "tests/corpus/net-socket-method-values.cjs",
+          "tests/corpus/net-paused-socket-exit.cjs",
+          "tests/corpus/net-server-socket-peer-close.cjs",
+          "tests/corpus/net-socket-encoding-pipe.cjs"
         ]
       },
       "anchorSource": "exact"
@@ -74176,7 +74338,13 @@
         "evidence": "compiler-dedicated:net.connect",
         "tests": [
           "tests/corpus/2500-net-autosel-timeout.ts",
-          "tests/corpus/2596-net-arg-ladders.cjs"
+          "tests/corpus/2596-net-arg-ladders.cjs",
+          "tests/corpus/net-socket-set-encoding-names.ts",
+          "tests/corpus/net-socket-write-rejected.cjs",
+          "tests/corpus/net-socket-method-values.cjs",
+          "tests/corpus/net-paused-socket-exit.cjs",
+          "tests/corpus/net-server-socket-peer-close.cjs",
+          "tests/corpus/net-socket-encoding-pipe.cjs"
         ]
       },
       "anchorSource": "exact"
@@ -74198,7 +74366,13 @@
         "evidence": "compiler-dedicated:net.createConnection",
         "tests": [
           "tests/corpus/2500-net-autosel-timeout.ts",
-          "tests/corpus/2596-net-arg-ladders.cjs"
+          "tests/corpus/2596-net-arg-ladders.cjs",
+          "tests/corpus/net-socket-set-encoding-names.ts",
+          "tests/corpus/net-socket-write-rejected.cjs",
+          "tests/corpus/net-socket-method-values.cjs",
+          "tests/corpus/net-paused-socket-exit.cjs",
+          "tests/corpus/net-server-socket-peer-close.cjs",
+          "tests/corpus/net-socket-encoding-pipe.cjs"
         ]
       },
       "anchorSource": "exact"
@@ -74220,7 +74394,13 @@
         "evidence": "compiler-dedicated:net.createConnection",
         "tests": [
           "tests/corpus/2500-net-autosel-timeout.ts",
-          "tests/corpus/2596-net-arg-ladders.cjs"
+          "tests/corpus/2596-net-arg-ladders.cjs",
+          "tests/corpus/net-socket-set-encoding-names.ts",
+          "tests/corpus/net-socket-write-rejected.cjs",
+          "tests/corpus/net-socket-method-values.cjs",
+          "tests/corpus/net-paused-socket-exit.cjs",
+          "tests/corpus/net-server-socket-peer-close.cjs",
+          "tests/corpus/net-socket-encoding-pipe.cjs"
         ]
       },
       "anchorSource": "exact"
@@ -74242,7 +74422,13 @@
         "evidence": "compiler-dedicated:net.createConnection",
         "tests": [
           "tests/corpus/2500-net-autosel-timeout.ts",
-          "tests/corpus/2596-net-arg-ladders.cjs"
+          "tests/corpus/2596-net-arg-ladders.cjs",
+          "tests/corpus/net-socket-set-encoding-names.ts",
+          "tests/corpus/net-socket-write-rejected.cjs",
+          "tests/corpus/net-socket-method-values.cjs",
+          "tests/corpus/net-paused-socket-exit.cjs",
+          "tests/corpus/net-server-socket-peer-close.cjs",
+          "tests/corpus/net-socket-encoding-pipe.cjs"
         ]
       },
       "anchorSource": "exact"
@@ -74264,7 +74450,13 @@
         "evidence": "compiler-dedicated:net.createConnection",
         "tests": [
           "tests/corpus/2500-net-autosel-timeout.ts",
-          "tests/corpus/2596-net-arg-ladders.cjs"
+          "tests/corpus/2596-net-arg-ladders.cjs",
+          "tests/corpus/net-socket-set-encoding-names.ts",
+          "tests/corpus/net-socket-write-rejected.cjs",
+          "tests/corpus/net-socket-method-values.cjs",
+          "tests/corpus/net-paused-socket-exit.cjs",
+          "tests/corpus/net-server-socket-peer-close.cjs",
+          "tests/corpus/net-socket-encoding-pipe.cjs"
         ]
       },
       "anchorSource": "exact"
@@ -74286,7 +74478,13 @@
         "evidence": "compiler-dedicated:net.createServer",
         "tests": [
           "tests/corpus/2500-net-autosel-timeout.ts",
-          "tests/corpus/2596-net-arg-ladders.cjs"
+          "tests/corpus/2596-net-arg-ladders.cjs",
+          "tests/corpus/net-socket-set-encoding-names.ts",
+          "tests/corpus/net-socket-write-rejected.cjs",
+          "tests/corpus/net-socket-method-values.cjs",
+          "tests/corpus/net-paused-socket-exit.cjs",
+          "tests/corpus/net-server-socket-peer-close.cjs",
+          "tests/corpus/net-socket-encoding-pipe.cjs"
         ]
       },
       "anchorSource": "exact"
@@ -74344,7 +74542,13 @@
         "evidence": "compiler-dedicated:net.getDefaultAutoSelectFamilyAttemptTimeout",
         "tests": [
           "tests/corpus/2500-net-autosel-timeout.ts",
-          "tests/corpus/2596-net-arg-ladders.cjs"
+          "tests/corpus/2596-net-arg-ladders.cjs",
+          "tests/corpus/net-socket-set-encoding-names.ts",
+          "tests/corpus/net-socket-write-rejected.cjs",
+          "tests/corpus/net-socket-method-values.cjs",
+          "tests/corpus/net-paused-socket-exit.cjs",
+          "tests/corpus/net-server-socket-peer-close.cjs",
+          "tests/corpus/net-socket-encoding-pipe.cjs"
         ]
       },
       "anchorSource": "exact"
@@ -74366,7 +74570,13 @@
         "evidence": "compiler-dedicated:net.setDefaultAutoSelectFamilyAttemptTimeout",
         "tests": [
           "tests/corpus/2500-net-autosel-timeout.ts",
-          "tests/corpus/2596-net-arg-ladders.cjs"
+          "tests/corpus/2596-net-arg-ladders.cjs",
+          "tests/corpus/net-socket-set-encoding-names.ts",
+          "tests/corpus/net-socket-write-rejected.cjs",
+          "tests/corpus/net-socket-method-values.cjs",
+          "tests/corpus/net-paused-socket-exit.cjs",
+          "tests/corpus/net-server-socket-peer-close.cjs",
+          "tests/corpus/net-socket-encoding-pipe.cjs"
         ]
       },
       "anchorSource": "exact"
@@ -75823,6 +76033,12 @@
           "tests/corpus/5214-perf-entry-inspect.ts",
           "tests/corpus/5215-perf-timing-validation.js",
           "tests/corpus/6397-event-loop-metrics.ts",
+          "tests/corpus/net-paused-socket-exit.cjs",
+          "tests/corpus/net-server-socket-peer-close.cjs",
+          "tests/corpus/net-socket-encoding-pipe.cjs",
+          "tests/corpus/net-socket-method-values.cjs",
+          "tests/corpus/net-socket-set-encoding-names.ts",
+          "tests/corpus/net-socket-write-rejected.cjs",
           "tests/fixtures/node-types/event-loop-metrics.ts"
         ]
       },
@@ -76126,7 +76342,13 @@
         "evidence": "compiler-dedicated:net.connect",
         "tests": [
           "tests/corpus/2500-net-autosel-timeout.ts",
-          "tests/corpus/2596-net-arg-ladders.cjs"
+          "tests/corpus/2596-net-arg-ladders.cjs",
+          "tests/corpus/net-socket-set-encoding-names.ts",
+          "tests/corpus/net-socket-write-rejected.cjs",
+          "tests/corpus/net-socket-method-values.cjs",
+          "tests/corpus/net-paused-socket-exit.cjs",
+          "tests/corpus/net-server-socket-peer-close.cjs",
+          "tests/corpus/net-socket-encoding-pipe.cjs"
         ]
       },
       "anchorSource": "exact"
@@ -96067,6 +96289,12 @@
           "tests/corpus/7440-tls-server-add-context.ts",
           "tests/corpus/7441-tls-client-error.ts",
           "tests/corpus/7442-tls-server-contexts.mjs",
+          "tests/corpus/net-paused-socket-exit.cjs",
+          "tests/corpus/net-server-socket-peer-close.cjs",
+          "tests/corpus/net-socket-encoding-pipe.cjs",
+          "tests/corpus/net-socket-method-values.cjs",
+          "tests/corpus/net-socket-set-encoding-names.ts",
+          "tests/corpus/net-socket-write-rejected.cjs",
           "tests/fixtures/node-types/tls-client-certificates.ts",
           "tests/fixtures/node-types/tls-peer-certificates.ts",
           "tests/fixtures/node-types/tls-server-contexts.ts",
@@ -96471,7 +96699,13 @@
         "evidence": "compiler-dedicated:server.address",
         "tests": [
           "tests/corpus/2500-net-autosel-timeout.ts",
-          "tests/corpus/2596-net-arg-ladders.cjs"
+          "tests/corpus/2596-net-arg-ladders.cjs",
+          "tests/corpus/net-socket-set-encoding-names.ts",
+          "tests/corpus/net-socket-write-rejected.cjs",
+          "tests/corpus/net-socket-method-values.cjs",
+          "tests/corpus/net-paused-socket-exit.cjs",
+          "tests/corpus/net-server-socket-peer-close.cjs",
+          "tests/corpus/net-socket-encoding-pipe.cjs"
         ]
       },
       "anchorSource": "exact"
@@ -96498,7 +96732,13 @@
         "evidence": "compiler-dedicated:server.close",
         "tests": [
           "tests/corpus/2500-net-autosel-timeout.ts",
-          "tests/corpus/2596-net-arg-ladders.cjs"
+          "tests/corpus/2596-net-arg-ladders.cjs",
+          "tests/corpus/net-socket-set-encoding-names.ts",
+          "tests/corpus/net-socket-write-rejected.cjs",
+          "tests/corpus/net-socket-method-values.cjs",
+          "tests/corpus/net-paused-socket-exit.cjs",
+          "tests/corpus/net-server-socket-peer-close.cjs",
+          "tests/corpus/net-socket-encoding-pipe.cjs"
         ]
       },
       "anchorSource": "exact"
@@ -96548,7 +96788,13 @@
         "evidence": "compiler-dedicated:server.listen",
         "tests": [
           "tests/corpus/2500-net-autosel-timeout.ts",
-          "tests/corpus/2596-net-arg-ladders.cjs"
+          "tests/corpus/2596-net-arg-ladders.cjs",
+          "tests/corpus/net-socket-set-encoding-names.ts",
+          "tests/corpus/net-socket-write-rejected.cjs",
+          "tests/corpus/net-socket-method-values.cjs",
+          "tests/corpus/net-paused-socket-exit.cjs",
+          "tests/corpus/net-server-socket-peer-close.cjs",
+          "tests/corpus/net-socket-encoding-pipe.cjs"
         ]
       },
       "anchorSource": "exact"

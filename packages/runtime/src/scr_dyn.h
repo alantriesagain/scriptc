@@ -329,6 +329,12 @@ typedef struct ScrDynTypedCast {
  * result as an owned (+1) dyn value. `args` entries are BORROWED. */
 typedef ScrDyn *(*ScrDynThunk)(ScrClosure *clo, ScrDyn *const *args, size_t argc);
 
+/* A compiled closure's jsval entry (scr_js.h words): calls the closure's
+ * jsval body with `args` (BORROWED words; a missing argument is undefined)
+ * and returns the result as an owned word. With an exception pending the
+ * word is undefined; callers test the exception cell, not the word. */
+typedef void *(*ScrDynJsEntry)(ScrClosure *clo, void *const *args, size_t argc);
+
 /* A compiled 'message' listener's typed entry: builds the closure's
  * parameter from the message's nodes (the readers below) and calls
  * the closure. Answers false, without calling it, when the message does
@@ -577,7 +583,7 @@ struct ScrDyn {
      * and `name` are static compiler-emitted literals (never freed); name
      * may be NULL (anonymous — inspect prints [Function (anonymous)]).
      * The dyn→closure ownership edge is traced by the cycle collector. */
-    struct { ScrClosure *clo; ScrDynThunk thunk; const char *sig; const char *name; uint32_t arity; ScrClassObj *class_obj; ScrDynMessageListener message; } fn;
+    struct { ScrClosure *clo; ScrDynThunk thunk; const char *sig; const char *name; uint32_t arity; ScrClassObj *class_obj; ScrDynMessageListener message; ScrDynJsEntry js; } fn;
     /* Native handles normally keep conservative ownership edges. Sets
      * backed by cycle-capable maps expose their edge to the collector.
      * Cache that allocation property: during collection the map may be
@@ -1363,6 +1369,9 @@ typedef struct {
   size_t key_len;
   const size_t *offsets;
 } ScrRecordViewSource;
+/* The slot of field `position` of a view. The SCR_RECORD_VIEW_PARTIAL build
+ * of scr_json.c, which only a program with a partial record assertion links,
+ * answers NULL for a field the viewed record does not declare (record-views.ts). */
 void *scr_record_view_slot(void *view, size_t position);
 void *scr_record_view_field(void *value, size_t offset, size_t position);
 void *scr_dyn_record_view(ScrDyn *d, const ScrRecordViewSource *sources, size_t count,
@@ -1432,6 +1441,12 @@ void scr_dyn_typed_ref_bind_bag_class(ScrDyn *d, const ScrDynTypedBagClassOps *o
  * exception pending, when the prototype hook threw. Never runs user
  * code. */
 ScrDyn *scr_dyn_typed_ref_bag_method(const ScrDyn *d, const char *key, size_t key_len);
+/* The own data property `key` of a class instance's capsule, +1, as its
+ * view holds it; NULL when the instance has no such own data property, or
+ * when `key` names a member of its class's prototype or of
+ * Object.prototype. NULL with an exception pending when building the view
+ * threw. */
+ScrDyn *scr_dyn_typed_ref_own_member(const ScrDyn *d, const char *key, size_t key_len);
 /* The constructor name of a class instance capsule's own class, for
  * util.inspect; NULL when the capsule is not a bound class instance, its
  * class is anonymous, or its prototype was replaced. */
@@ -1744,6 +1759,10 @@ void scr_errdyn_put(ScrError *e, ScrDyn *d);  /* retains both sides */
 /* Sets an own property on an error: its checked-dynamic node, which casts
  * and util.inspect read. Moves value. */
 void scr_error_set_prop(ScrError *e, const char *key, size_t key_len, ScrDyn *value);
+/* scr_throw_node_coded with an own `url` property (error.nodeThrow's
+ * fourth argument). Borrows the strings; always throws. */
+SCR_COLD void scr_throw_node_coded_url(double kind, const ScrStr *code, const ScrStr *msg,
+                                       const ScrStr *url);
 ScrDyn *scr_errdyn_view_of(const ScrError *e); /* borrowed or NULL */
 /* ToBoolean over the dyn kind (JS-exact); borrowed, never throws. */
 bool scr_dyn_truthy(const ScrDyn *d);
@@ -1817,6 +1836,9 @@ ScrDyn *scr_dyn_new_func(ScrClosure *clo, ScrDynThunk thunk, uint32_t arity, con
 /* Gives a function box made with thunk its typed message entry (an
  * EventEmitter listener registered from it keeps the entry). */
 void scr_dyn_func_set_message(ScrDyn *fn, ScrDynThunk thunk, ScrDynMessageListener listener);
+/* Gives a function box made with thunk its jsval entry. Emitted call sites
+ * of the dynamic tier load v.fn.js directly (at byte 72 on 64-bit targets). */
+void scr_dyn_func_set_js(ScrDyn *fn, ScrDynThunk thunk, ScrDynJsEntry entry);
 /* Sets a freshly boxed function's `length` (a builtin function value whose
  * length is not its adapter's parameter count). */
 void scr_dyn_function_set_length(ScrDyn *fn, uint32_t length);
@@ -2286,6 +2308,7 @@ ScrDyn *scr_gen_receiver(void);
  * firing site opens/closes it around a 'data' pass; scr_dyn_new_chunk
  * answers a Buffer-flavored bytes box, or a string inside the window. */
 void scr_dyn_chunk_enc(bool utf8);
+void scr_dyn_chunk_text(ScrStr *text); /* a decoded string instead; borrowed, NULL closes */
 ScrDyn *scr_dyn_new_chunk(const ScrBytes *b);
 
 /* The JSON text of a dyn value: the JSON.stringify text (+1),
