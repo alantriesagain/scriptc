@@ -263,6 +263,21 @@ export function variantsFor(source) {
       when: { dynTier: true, webStreams: true, nodeIsland: true },
       defines: ["SCR_JS_TIER", "SCR_HANDLE_CLASSES", "SCR_NODE_ISLANDS"],
     });
+    // A program with a partial record assertion (record-views.ts) links the
+    // build whose view slot answers NULL for a field the viewed record does
+    // not declare, so the emitted guard, clone helper and presence test can
+    // stop with the program's message instead of reading a bogus slot. The
+    // selector takes the variant with the most conditions, so each of the
+    // builds above needs its counterpart; every other program keeps the
+    // default object, byte for byte.
+    for (const { id, when, defines } of variants.slice()) {
+      const suffix = id === "default" ? "" : `-${id}`;
+      variants.push({
+        id: `record-view-partial${suffix}`,
+        when: { ...when, recordViewPartial: true },
+        defines: [...defines, "SCR_RECORD_VIEW_PARTIAL"],
+      });
+    }
   }
   // util.inspect and instanceof of Node island handles; Node's report for
   // an uncaught island error.

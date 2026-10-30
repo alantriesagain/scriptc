@@ -31,6 +31,10 @@ export interface NativeLinkFeatures {
   /** The program assigns process.emitWarning: links the
    * SCR_WARNING_REPLACE variant of the dyn-async unit. */
   warningReplace?: boolean;
+  /** The program asserts a record literal to a wider record type (a partial
+   * record view): links the SCR_RECORD_VIEW_PARTIAL variant of scr_json.c.
+   * Absent for every program without one, so their objects stay identical. */
+  recordViewPartial?: boolean;
   /** The program uses process.stdin.setEncoding, string 'data' listeners
    * or stdio 'resize' events: links the SCR_STDIO_EXTENDED events unit. */
   stdioExtended?: boolean;

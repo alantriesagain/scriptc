@@ -1,5 +1,6 @@
 import { createRequire } from "node:module";
 import { setShapeOverlayMemoDir, shapeOverlayEnabled } from "./frontend/shape-inference/index.js";
+import { jsInferenceEnabled } from "./frontend/js-inference.js";
 import { nodeFrontendServices } from "./frontend/services-node.js";
 import {
   runTypePatchCommand,
@@ -762,6 +763,7 @@ async function compileExecutableNative(
     ...(features.eventTarget ? { eventTarget: true } : {}),
     ...(features.wasm ? { wasm: true } : {}),
     ...(features.warningReplace ? { warningReplace: true } : {}),
+    ...(features.recordViewPartial ? { recordViewPartial: true } : {}),
     ...(features.stdioExtended ? { stdioExtended: true } : {}),
     ...(features.streamWriteErrors ? { streamWriteErrors: true } : {}),
     ...(features.stdioWriteSlot ? { stdioWriteSlot: true } : {}),
@@ -1941,6 +1943,9 @@ async function compileTracked(
       ...(heapCensusRequested() ? { heapCensus: true as const } : {}),
       npmStatic: opts.npmStatic ?? null,
       ...(shapeOverlayEnabled() ? { shapeOverlay: true as const } : {}),
+      ...(jsInferenceEnabled() && process.env["SCRIPTC_SHAPE_OVERLAY"] !== "0"
+        ? { jsInference: true as const }
+        : {}),
       ffiProfile:
         opts.ffiProfilePath === undefined || ffiProfileBytes === null
           ? null

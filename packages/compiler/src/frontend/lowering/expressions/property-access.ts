@@ -206,6 +206,7 @@ import { InternalCompilerError } from "../../../errors.js";
 import { lowerUnionFieldRead } from "./union-fields.js";
 import { errorPropertyRead } from "../error-methods.js";
 import { isSafeToDiscard, isSafeToRepeat } from "./evaluation-safety.js";
+import { partialAssertionFields, partialFieldRead } from "../partial-assertions.js";
 import { isZlibStreamMember, lowerZlibStreamBytesWritten } from "../builtins/compression.js";
 import { isWebCryptoReceiver } from "../builtins/crypto.js";
 import { isFsStreamMember, lowerFsStreamProperty } from "../builtins/fs-streams.js";
@@ -4903,6 +4904,23 @@ export function fieldGetExpr(
       if (helper) return { kind: "call", callee: helper, args: [read], type: inner, loc };
     }
     return read;
+  }
+  // A field some partial record assertion leaves unwritten (a partial
+  // record view, partial-assertions.ts): a read of an absent field throws
+  // the catchable TypeError instead of reading a slot the view lacks.
+  if (partialAssertionFields(lowerer, target.shapeId).has(target.field)) {
+    const obj = target.obj;
+    if (isSafeToRepeat(obj))
+      return partialFieldRead(lowerer, obj, target.shapeId, target.field, target.fieldType, loc)!;
+    const stable = lowerer.declareHiddenLocal("%partialRecv", obj.type);
+    const ref = varRef(stable.id, obj.type, loc);
+    return {
+      kind: "seqExpr",
+      stmts: [{ kind: "varDecl", localId: stable.id, init: obj, loc }],
+      result: partialFieldRead(lowerer, ref, target.shapeId, target.field, target.fieldType, loc)!,
+      type: target.fieldType,
+      loc,
+    };
   }
   return {
     kind: "recordGet",

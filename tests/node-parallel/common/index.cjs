@@ -8,12 +8,13 @@ const os = require("os");
 const { inspect } = require("util");
 
 const hasIntl = true;
-const enoughTestMem = require("os").totalmem() > 0x70000000; /* 1.75 Gb */
+const enoughTestMem = os.totalmem() > 0x70000000; /* 1.75 Gb */
 const isDebug = false;
 const isWindows = process.platform === "win32";
 const isAIX = os.type() === "AIX";
 const isIBMi = os.type() === "OS400";
 const isSunOS = process.platform === "sunos";
+const hasCrypto = Boolean(process.versions.openssl);
 const mustCallChecks = [];
 
 function runCallChecks(exitCode) {
@@ -61,6 +62,13 @@ function mustCallAtLeast(fn, minimum) {
   return mustCallInner(fn, minimum, "minimum");
 }
 
+function mustSucceed(fn, exact) {
+  return mustCall(function (err, ...args) {
+    assert.ifError(err);
+    if (typeof fn === "function") return fn.apply(this, args);
+  }, exact);
+}
+
 function mustNotCall(msg) {
   return function mustNotCall() {
     assert.fail(msg || "function should not have been called");
@@ -88,6 +96,23 @@ function expectWarning(name, expected, code) {
       throw new TypeError(`"${warning.name}" was triggered without being expected.`);
     check(warning);
   });
+}
+
+function expectsError(validator, exact) {
+  return mustCall((...args) => {
+    if (args.length !== 1) assert.fail(`Expected one argument, got ${inspect(args)}`);
+    const error = args.pop();
+    assert.strictEqual(Object.prototype.propertyIsEnumerable.call(error, "message"), false);
+    assert.throws(() => {
+      throw error;
+    }, validator);
+    return true;
+  }, exact);
+}
+
+function platformTimeout(ms) {
+  if (isAIX || isIBMi) return (typeof ms === "bigint" ? 2n : 2) * ms;
+  return ms;
 }
 
 function invalidArgTypeHelper(input) {
@@ -150,6 +175,7 @@ function spawnPromisified(command, args, options) {
 
 module.exports = {
   enoughTestMem,
+  hasCrypto,
   hasIntl,
   isAIX,
   isDebug,
@@ -159,9 +185,33 @@ module.exports = {
   mustCall,
   mustCallAtLeast,
   mustNotCall,
+  mustSucceed,
   skip,
   expectWarning,
   getArrayBufferViews,
+  expectsError,
   invalidArgTypeHelper,
+  platformTimeout,
   spawnPromisified,
+  get hasIPv6() {
+    const re = isWindows ? /Loopback Pseudo-Interface/ : isIBMi ? /\*LOOPBACK/ : /lo/;
+    const interfaces = os.networkInterfaces();
+    return Object.keys(interfaces).some(
+      (name) => re.test(name) && interfaces[name].some(({ family }) => family === "IPv6"),
+    );
+  },
+  inFreeBSDJail: false,
+  localhostIPv4: "127.0.0.1",
+  // The helpers below load their modules on first use, so that files of other
+  // lanes do not load node:net or the tmpdir helper.
+  get defaultAutoSelectFamilyAttemptTimeout() {
+    return require("net").getDefaultAutoSelectFamilyAttemptTimeout();
+  },
+  get PIPE() {
+    const path = require("path");
+    const pipePrefix = isWindows
+      ? "\\\\.\\pipe\\"
+      : path.relative(process.cwd(), `${require("./tmpdir").path}/`);
+    return path.join(pipePrefix, `node-test.${process.pid}.sock`);
+  },
 };

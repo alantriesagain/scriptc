@@ -6966,11 +6966,15 @@ export function lowerStreamMethodCall(
     const lowerWriteCb = (cbArg: ts.Expression): IrExpr => {
       // The stream ignores what the callback returns (`() => count++`, a
       // stored function returning a value): the value is discarded.
+      // An untyped callback (a function a JavaScript module returned) is
+      // called unbound with the error argument, as Node calls it.
       const raw = lowerer.lowerExpr(cbArg);
       const cb =
-        raw.type.kind === "func" && raw.type.ret.kind !== "void" && raw.type.params.length <= 1
-          ? lowerer.coerceToExpected(raw, funcOf(raw.type.params, VOID))
-          : raw;
+        raw.type.kind === "dyn"
+          ? lowerer.coerceToExpected(raw, funcOf([DYN], VOID))
+          : raw.type.kind === "func" && raw.type.ret.kind !== "void" && raw.type.params.length <= 1
+            ? lowerer.coerceToExpected(raw, funcOf(raw.type.params, VOID))
+            : raw;
       if (cb.type.kind !== "func" || cb.type.ret.kind !== "void" || cb.type.params.length > 1) {
         lowerer.noLowering(
           "write completion callbacks of this shape",

@@ -170,6 +170,9 @@ export interface CcOptions {
   wasm?: boolean;
   /** SCR_WARNING_REPLACE: process.emitWarning replacement support. */
   warningReplace?: boolean;
+  /** SCR_RECORD_VIEW_PARTIAL: the scr_json.c build whose view slot answers
+   * NULL for a field a partial record view does not have. */
+  recordViewPartial?: boolean;
   /** SCR_STDIO_EXTENDED: stdin encoding, string data listeners, resize. */
   stdioExtended?: boolean;
   /** SCR_STREAM_WRITE_ERRORS: the stream unit publishes the error each
