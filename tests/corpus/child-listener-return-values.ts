@@ -34,6 +34,24 @@ async function main(): Promise<void> {
   });
   await waitClose(c3);
 
+  // A value-returning listener registers through an adapter; removing the
+  // original function removes it.
+  const c4 = spawn("/bin/sh", ["-c", "exit 4"], { stdio: "ignore" });
+  const removed = (code: number | null): number => {
+    console.log("removed listener ran", code);
+    return 1;
+  };
+  const kept = (code: number | null): number => {
+    console.log("kept listener", code);
+    return 2;
+  };
+  c4.on("exit", removed);
+  c4.on("close", removed);
+  c4.on("exit", kept);
+  c4.off("exit", removed);
+  c4.removeListener("close", removed);
+  await waitClose(c4);
+
   console.log("main done");
 }
 
