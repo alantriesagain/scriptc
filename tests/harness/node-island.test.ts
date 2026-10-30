@@ -501,6 +501,59 @@ export const patched = Kind.A;
       expect(stripped).toBeDefined();
       expect(stripped).toContain("enum");
     });
+
+    test("a TypeScript patcher shares the program modules it imports with native code", async () => {
+      // state.ts is a stateful program module that both the native entry and
+      // the islanded patcher import: Node runs one copy of it, so the island
+      // must reach the program's copy, not one of its own.
+      const dir = copyCorpus(
+        "shared-state",
+        `import { bump, count } from "./state.ts";
+import { patchAndBump } from "./statepatch.ts";
+bump();
+const fromIsland = patchAndBump();
+console.log(fromIsland, count());
+`,
+        {
+          "state.ts": `let value = 0;
+export function bump(): number {
+  value++;
+  return value;
+}
+export function count(): number {
+  return value;
+}
+`,
+          "statepatch.ts": `import { createRequire } from "node:module";
+import { bump } from "./state.ts";
+const require = createRequire(import.meta.url);
+const fs = require("fs") as typeof import("fs");
+const original = fs.readFileSync;
+export function patchAndBump(): number {
+  fs.readFileSync = original;
+  return bump();
+}
+`,
+        },
+      );
+      const result = await buildDir(dir, "main");
+      expect(messages(result)).toEqual([]);
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.islands?.modules.map((file) => basename(file))).toEqual(["statepatch.ts"]);
+      // Node strips types only outside node_modules, and the shared island
+      // cache of these tests lives below the repository's node_modules.
+      const islandCache = mkdtempSync(join(tmpdir(), "scriptc-island-cache-"));
+      try {
+        const out = await run(join(dir, "main"), [], {
+          ...process.env,
+          XDG_CACHE_HOME: islandCache,
+        });
+        expect(out).toEqual({ stdout: "2 2\n", stderr: "", code: 0 });
+      } finally {
+        rmSync(islandCache, { recursive: true, force: true });
+      }
+    }, 300_000);
   });
 });
 

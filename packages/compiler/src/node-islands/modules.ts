@@ -343,18 +343,32 @@ export class NodeIslandModuleCollector {
    * read to the wasm next to the patching module), and the island runs from
    * the shipped tree, so a file the module names by a string literal ships
    * with it. Files the source does not name stay out, and module sources
-   * ship through the traced walk, never as data. */
+   * ship through the traced walk, never as data. The walk stays inside the
+   * module's directory: a symbolic link (to a file or a directory) that
+   * leads outside it is not followed, so nothing from elsewhere on the
+   * machine is embedded. */
   private addNamedData(moduleFile: string, text: string): void {
     const names = new Set<string>();
     for (const token of moduleTokens(text))
       if (token.kind === "string" && !token.value.includes("${")) names.add(basename(token.value));
     if (names.size === 0) return;
+    const root = dirname(moduleFile);
+    const inside = (path: string): boolean => {
+      const rel = relative(root, path);
+      return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+    };
+    const visited = new Set<string>();
     const walk = (dir: string): void => {
+      const real = trackedRealpath(dir);
+      if (real === null || !inside(real) || visited.has(real)) return;
+      visited.add(real);
       const entries = trackedAccessibleEntries(dir);
       if (entries === null) return;
       for (const file of entries.files) {
         const path = join(dir, file);
         if (!names.has(file) || TRACED.test(file) || path === moduleFile) continue;
+        const target = trackedRealpath(path);
+        if (target === null || !inside(target)) continue;
         this.files.add(path);
       }
       for (const sub of entries.directories) {
@@ -362,7 +376,7 @@ export class NodeIslandModuleCollector {
         walk(join(dir, sub));
       }
     };
-    walk(dirname(moduleFile));
+    walk(root);
   }
 
   /** A package: its whole directory, then its dependencies. */

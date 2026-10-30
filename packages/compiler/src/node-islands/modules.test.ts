@@ -269,6 +269,25 @@ describe("the collected module tree", () => {
     expect(paths).not.toContain("helper.ts");
   });
 
+  test("named data stays inside the module's directory: links out of it are not followed", () => {
+    const outside = project({ "secrets/config.json": "{}", "token.txt": "secret\n" });
+    const root = project({
+      "src/main.ts": "",
+      "src/loader.ts": 'const names = ["config.json", "token.txt", "payload.txt"];',
+      "src/data/payload.txt": "shipped\n",
+    });
+    symlinkSync(join(outside, "secrets"), join(root, "src/linked"), "dir");
+    symlinkSync(join(outside, "token.txt"), join(root, "src/data/token.txt"));
+    // A link back up the tree must not loop the walk.
+    symlinkSync(join(root, "src"), join(root, "src/data/loop"), "dir");
+    const collector = new NodeIslandModuleCollector();
+    expect(collector.add(join(root, "src/main.ts"), "./loader.ts")).toBeNull();
+    const paths = collector.tree()!.files.map((file) => file.path);
+    expect(paths).toContain("data/payload.txt");
+    expect(paths.filter((path) => path.endsWith("config.json"))).toEqual([]);
+    expect(paths.filter((path) => path.endsWith("token.txt"))).toEqual([]);
+  });
+
   test("the manifest names relative paths only, and the data is checked against it", () => {
     const root = project({ "main.ts": "", "m.cjs": "exports.f = () => 1;" });
     const collector = new NodeIslandModuleCollector();
