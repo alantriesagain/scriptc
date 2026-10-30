@@ -593,7 +593,12 @@ import {
 } from "./builtins/filesystem.js";
 import { lowerSpawnSyncCall, lowerSpawnCall, lowerExecFileCall } from "./builtins/child-process.js";
 import { lowerExecSyncCall } from "./builtins/child-process-sync.js";
-import { isProcessEnv, envValueType, lowerProcessEnvGet } from "./builtins/environment.js";
+import {
+  isProcessEnv,
+  envValueType,
+  lowerProcessEnvGet,
+  refuseHeldEnvWrite,
+} from "./builtins/environment.js";
 import { lowerJsonMethodCall, lowerJsonProperty } from "./builtins/json.js";
 import { lowerCryptoComposedCall, lowerCryptoModuleCall } from "./builtins/crypto.js";
 import { lowerUrlMethodCall, lowerSearchParamsMethodCall } from "./builtins/url.js";
@@ -16917,6 +16922,7 @@ export class Lowerer {
   }
 
   fieldSetStmt(target: FieldTarget, value: IrExpr, loc: SrcLoc, blame: ts.Node): IrStmt {
+    refuseHeldEnvWrite(this, blame);
     return markSloppyRecordWrites(this, fieldSetStmt(this, target, value, loc, blame), blame);
   }
 
