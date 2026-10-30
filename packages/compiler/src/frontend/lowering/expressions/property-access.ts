@@ -1909,7 +1909,10 @@ export const DEFERRED_READ_MESSAGE =
  * Node's brand-check TypeError when that receiver is not a collection of
  * the right kind. Only JavaScript sources take this path: a typed source
  * keeps its refusal (the checker's Set/Map signature has no value form).
- * The receiver expression still runs for its effects. */
+ * The receiver expression still runs for its effects, and a receiver the
+ * checker typed with an undefined arm (an out-of-bounds element of a
+ * `Set[]`, `xs[1].has`) throws Node's TypeError at the read itself: the
+ * member access on a nullish receiver fails before any method exists. */
 function dynCollectionMethodValue(
   lowerer: Lowerer,
   expr: ts.PropertyAccessExpression,
@@ -1928,15 +1931,52 @@ function dynCollectionMethodValue(
     loc,
   };
   const receiver = lowerer.lowerExpr(expr.expression);
-  return isSafeToDiscard(receiver)
-    ? method
-    : {
-        kind: "seqExpr",
-        stmts: [{ kind: "exprStmt", expr: receiver, loc: locOf(expr.expression) }],
-        result: method,
-        type: DYN,
+  const unionType = receiver.type.kind === "union" ? receiver.type : null;
+  const units: { tag: number; unit: "null" | "undefined" }[] = [];
+  if (unionType) {
+    const def = lowerer.unions.get(unionType.unionId);
+    def?.arms.forEach((arm, tag) => {
+      if (isUnitType(arm)) units.push({ tag, unit: arm.kind === "nullT" ? "null" : "undefined" });
+    });
+  }
+  if (units.length === 0 || unionType === null) {
+    return isSafeToDiscard(receiver)
+      ? method
+      : {
+          kind: "seqExpr",
+          stmts: [{ kind: "exprStmt", expr: receiver, loc: locOf(expr.expression) }],
+          result: method,
+          type: DYN,
+          loc,
+        };
+  }
+  const held = lowerer.declareHiddenLocal("%collectionMethodReceiver", unionType);
+  let result: IrExpr = method;
+  for (const { tag, unit } of units) {
+    result = {
+      kind: "ternary",
+      cond: {
+        kind: "unionIsTag",
+        unionId: unionType.unionId,
+        tag,
+        negated: false,
+        value: varRef(held.id, unionType, loc),
+        type: BOOL,
         loc,
-      };
+      },
+      then: nodeThrowExpr(1, "", `Cannot read properties of ${unit} (reading '${name}')`, DYN, loc),
+      else_: result,
+      type: DYN,
+      loc,
+    };
+  }
+  return {
+    kind: "seqExpr",
+    stmts: [{ kind: "varDecl", localId: held.id, init: receiver, loc }],
+    result,
+    type: DYN,
+    loc,
+  };
 }
 
 /** Property access on a string or array receiver: `.length` lowers to the
