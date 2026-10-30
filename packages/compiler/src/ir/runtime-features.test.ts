@@ -179,6 +179,18 @@ describe("runtime feature snapshots", () => {
     expect(moduleRuntimeFeatures(mod).dynAsync).toBe(false);
   });
 
+  test("the any-object descriptor entry points link the dyn-invoke unit", () => {
+    for (const fn of [
+      "dyn.definePropertyShapes",
+      "dyn.definePropsShapes",
+      "dyn.objCreateWithPropertiesShapes",
+    ] as const) {
+      const mod = module();
+      mod.functions[0]!.body.push(call(fn));
+      expect(moduleRuntimeFeatures(mod).dynInvoke).toBe(true);
+    }
+  });
+
   test("gates the fs read's Buffer brand on a typed read plus an observable brand", () => {
     const bytes = { kind: "bytes" as const, elem: "u8" as const };
     const data = { kind: "varRef" as const, localId: "data", type: bytes, loc };

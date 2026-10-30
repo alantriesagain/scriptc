@@ -1193,6 +1193,12 @@ export const LIB_FN_SYMS: Record<string, string> = {
   "dyn.in": "scr_dyn_in",
   "dyn.defineProps": "scr_dyn_define_props",
   "dyn.defineProperty": "scr_dyn_define_property",
+  // A descriptor built by an expression: entry points whose
+  // ToPropertyDescriptor accepts any object and reads inherited fields
+  // (scr_dyn_descriptor_snapshot). Only programs that call them link them.
+  "dyn.definePropsShapes": "scr_dyn_define_props_shapes",
+  "dyn.definePropertyShapes": "scr_dyn_define_property_shapes",
+  "dyn.objCreateWithPropertiesShapes": "scr_dyn_obj_create_with_properties_shapes",
   "dyn.getOwnPropertyDescriptor": "scr_dyn_get_own_property_descriptor",
   "dyn.arrayProtoCall": "scr_dyn_array_proto_call",
   "dyn.arrayLikeProtoCall": "scr_dyn_array_like_call",

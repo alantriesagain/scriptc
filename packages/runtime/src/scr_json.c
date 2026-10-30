@@ -7477,6 +7477,102 @@ static bool scr_dyn_descriptor_fields_read(const ScrDyn *descriptor, ScrDyn **fi
   }
   return true;
 }
+
+/* [[Get]] of one descriptor field (+1, NULL with an exception pending).
+ * scr_dyn_obj_read walks objects, arrays and functions. A typed array,
+ * Buffer or DataView answers its own named-property table and then its
+ * prototype's members, and a handle its modeled members, each with the
+ * descriptor as a getter's `this`. A typed reference answers from its live
+ * fields or its view. A field that only the instance's compiled class
+ * members define (an accessor, or a method named `get`) has no runtime
+ * read, and throws an SC2020 Error. */
+static ScrDyn *scr_dyn_descriptor_field_get(const ScrDyn *descriptor, const ScrStr *key) {
+  if (descriptor->kind == SCR_DYN_TYPED_REF) {
+    ScrDyn *live = scr_dyn_typed_ref_key_get(descriptor, key);
+    if (live || scr_exc_pending()) return live;
+    ScrDyn *view = scr_dyn_typed_ref_materialize(descriptor);
+    if (!view || scr_exc_pending()) {
+      scr_dyn_release(view);
+      return NULL;
+    }
+    ScrDyn *result = NULL;
+    if (view->kind != SCR_DYN_OBJ || scr_dyn_property_owner(view, key->data, key->len)) {
+      result = scr_dyn_descriptor_field_get(view, key);
+    } else {
+      ScrJsonBuf message;
+      scr_jb_init(&message);
+      scr_jb_puts(&message, "reading ");
+      scr_jb_write(&message, key->data, key->len);
+      scr_jb_puts(&message, " from a class member of a property descriptor is not supported yet");
+      ScrStr *text = scr_jb_finish(&message);
+      scr_throw_error_msg_code(SCR_ERR_ERROR, text->data, text->len, "SC2020");
+      scr_str_release(text);
+    }
+    scr_dyn_release(view);
+    return result;
+  }
+  if (descriptor->kind == SCR_DYN_BYTES) return scr_dyn_bytes_key_get(descriptor, key);
+  if (descriptor->kind == SCR_DYN_HANDLE) return scr_dyn_handle_key_get(descriptor, key);
+  return scr_dyn_obj_read(descriptor, key->data, key->len);
+}
+
+/* ToPropertyDescriptor of any object, for the entry points that a
+ * descriptor built by an expression reaches (scr_dyn_define_property_shapes
+ * and its siblings). The spec's Type(Desc) is Object, so an array, a
+ * function, a typed array, a DataView or a class instance answers the
+ * fields it carries: each field is present through [[HasProperty]] (an
+ * inherited `enumerable` or `value` counts) and then read through [[Get]],
+ * in the order of scr_dyn_descriptor_fields_read. Returns a plain object
+ * holding the present fields as own data properties (+1), which
+ * scr_dyn_descriptor_fields_read then checks, or NULL with an exception
+ * pending: Node's TypeError for a primitive, or a getter's exception. A
+ * handle without a method table, such as a native Map, answers `in` for
+ * none of its prototype's methods, so a `get` or `set` it inherits would be
+ * missed: it throws an SC2020 Error instead. */
+ScrDyn *scr_dyn_descriptor_snapshot(const ScrDyn *descriptor) {
+  if (!scr_iterator_object(descriptor)) {
+    /* Node names the primitive as String() renders it. */
+    ScrStr *rendered = scr_dyn_string_constructor(descriptor);
+    if (!rendered) return NULL;
+    ScrJsonBuf message;
+    scr_jb_init(&message);
+    scr_jb_puts(&message, "Property description must be an object: ");
+    scr_jb_write(&message, rendered->data, rendered->len);
+    scr_str_release(rendered);
+    scr_throw_error(SCR_ERR_TYPE, scr_jb_finish(&message));
+    return NULL;
+  }
+  if (descriptor->kind == SCR_DYN_HANDLE) {
+    const ScrDynHandleOps *ops = scr_dyn_handle_ops(descriptor->v.handle.tag);
+    if (!ops->methods || !ops->invoke) {
+      ScrJsonBuf message;
+      scr_jb_init(&message);
+      scr_jb_puts(&message, "a ");
+      scr_jb_puts(&message, ops->cls);
+      scr_jb_puts(&message, " as a property descriptor is not supported yet");
+      ScrStr *text = scr_jb_finish(&message);
+      scr_throw_error_msg_code(SCR_ERR_ERROR, text->data, text->len, "SC2020");
+      scr_str_release(text);
+      return NULL;
+    }
+  }
+  static const char *const names[] = {"enumerable", "configurable", "value", "writable", "get", "set"};
+  static const size_t lengths[] = {10, 12, 5, 8, 3, 3};
+  ScrDyn *snapshot = scr_dyn_new_obj();
+  for (size_t i = 0; i < 6; i++) {
+    ScrStr *name = scr_str_new(names[i], lengths[i]);
+    bool present = scr_dyn_in(descriptor, name);
+    ScrDyn *field = present && !scr_exc_pending() ? scr_dyn_descriptor_field_get(descriptor, name) : NULL;
+    scr_str_release(name);
+    if (scr_exc_pending()) {
+      scr_dyn_release(field);
+      scr_dyn_release(snapshot);
+      return NULL;
+    }
+    if (field) scr_dyn_obj_set(snapshot, names[i], lengths[i], field);
+  }
+  return snapshot;
+}
 static void scr_error_sync_cause(ScrDyn *view, const ScrStr *key);
 static void scr_error_sync_slots(const ScrDyn *view, ScrDyn *obj, const ScrStr *key);
 
@@ -9783,6 +9879,21 @@ ScrDyn *scr_dyn_define_property(ScrDyn *target, ScrDyn *key, ScrDyn *descriptor)
   scr_error_sync_cause(target, name);
   scr_str_release(name);
   return scr_dyn_retain(target);
+}
+
+/* Object.defineProperty for a descriptor built by an expression: the
+ * descriptor may be any object (scr_dyn_descriptor_snapshot). As in the
+ * spec, a primitive target throws before the descriptor is read, and an
+ * object key is converted with ToPropertyKey before it. */
+ScrDyn *scr_dyn_define_property_shapes(ScrDyn *target, ScrDyn *key, ScrDyn *descriptor) {
+  if (!scr_iterator_object(target)) return scr_dyn_define_property(target, key, descriptor);
+  ScrDyn *property = scr_iterator_object(key) ? scr_dyn_property_key_value(key) : scr_dyn_retain(key);
+  if (!property) return NULL;
+  ScrDyn *snapshot = scr_dyn_descriptor_snapshot(descriptor);
+  ScrDyn *result = snapshot ? scr_dyn_define_property(target, property, snapshot) : NULL;
+  scr_dyn_release(snapshot);
+  scr_dyn_release(property);
+  return result;
 }
 
 ScrDyn *scr_dyn_get_own_property_descriptor(ScrDyn *target, ScrDyn *key) {
