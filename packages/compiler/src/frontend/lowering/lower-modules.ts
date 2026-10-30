@@ -137,6 +137,7 @@ import { funcTypeFromParamShapes, registerOverloadedCallableAlias } from "./call
 import {
   jsBindingHasOpenWrites,
   hasJsTypeAnnotation,
+  inferredEvolvingLetType,
   isVarDeclared,
   numericIteratorSourceOf,
   provenanceElidedConstDecl,
@@ -2465,10 +2466,16 @@ export function collectGlobals(
           ) {
             const symbol = lowerer.checker.getSymbolAtLocation(nameNode);
             if (symbol && !lowerer.globalsBySymbol.has(symbol)) {
+              // An initializer-less `let` whose writes all agree keeps
+              // their type, as a function's local does (lowerVarDecl).
+              const evolved =
+                isLet && !isVarDeclared(decl) && decl.initializer === undefined
+                  ? inferredEvolvingLetType(lowerer, decl)
+                  : null;
               const g: IrGlobal = {
                 id: `%g.${tag}${nsPrefix}${nameNode.text}`,
                 name: nameNode.text,
-                type: DYN,
+                type: evolved ?? DYN,
                 mutable: isLet,
                 source: bindingSource(nameNode),
               };
@@ -2477,7 +2484,7 @@ export function collectGlobals(
               // Mutable dyn globals hold the dyn undefined from module
               // entry (the main path's rule below): a closure called
               // above the declaration reads undefined instead of
-              // faulting on NULL.
+              // faulting on NULL. An undefined-armed union does the same.
               if (g.mutable) noteVarGlobalEntryInit(lowerer, sf, g);
             }
             continue;
