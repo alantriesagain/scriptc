@@ -72,7 +72,8 @@
  *            diagnostics/dynamic-tier.ts), package files whose projected
  *            declaration types were dropped (SC6102), and shape inference's
  *            overlay report: what it typed and how many inferred facts the
- *            build checks (SC6103, frontend/shape-inference)
+ *            build checks (SC6103, frontend/shape-inference), and InlineArray
+ *            fields that keep ordinary arrays (SC6105, contracts/check.ts)
  *   SC7xxx  contract types (@scriptc/types): a NoThrow, Int32, Immutable,
  *            Acyclic or ProgramLifetime contract that does not hold or
  *            cannot be checked (SC7001–SC7009, contracts/check.ts)
