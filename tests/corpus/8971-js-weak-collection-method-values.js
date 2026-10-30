@@ -41,3 +41,71 @@ function withReceiver() {
 }
 report("call-receiver-foreign", () => withReceiver().has.call({}, key));
 report("value-type", () => typeof wm.has);
+
+// A receiver typed with both collections reads the function the value it
+// holds answers, and one that may be null or undefined throws the
+// property-read TypeError from the read itself.
+function pick(flag) {
+  return flag ? new WeakMap() : new WeakSet();
+}
+
+const either = pick(true);
+
+report("union-map-has", () => {
+  const has = either.has;
+  return has.call(either, key);
+});
+report("union-set-has", () => {
+  const set = pick(false);
+  return set.has.call(set, key);
+});
+report("union-map-add", () => typeof either.add);
+report("union-set-add", () => {
+  const set = pick(false);
+  return typeof set.add;
+});
+report("union-set-get", () => typeof pick(false).get);
+report("union-foreign-receiver", () => either.has.call([], key));
+
+function maybeKeyed(flag) {
+  return flag ? new WeakMap() : null;
+}
+
+const missing = maybeKeyed(false);
+
+report("null-read", () => missing.has);
+report("null-present", () => {
+  const held = maybeKeyed(true);
+  return typeof held.get;
+});
+
+function maybeAbsent(flag) {
+  return flag ? new WeakSet() : undefined;
+}
+
+report("undefined-read", () => maybeAbsent(false).delete);
+report("undefined-present", () => {
+  const held = maybeAbsent(true);
+  return typeof held.add;
+});
+
+console.log(
+  "null-message",
+  (() => {
+    try {
+      return String(missing.get);
+    } catch (e) {
+      return e.message;
+    }
+  })(),
+);
+console.log(
+  "undefined-message",
+  (() => {
+    try {
+      return String(maybeAbsent(false).add);
+    } catch (e) {
+      return e.message;
+    }
+  })(),
+);

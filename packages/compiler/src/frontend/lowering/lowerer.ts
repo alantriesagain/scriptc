@@ -5361,17 +5361,21 @@ export class Lowerer {
     );
   }
 
-  /** A stdlib WeakMap or WeakSet, alone or with `null`/`undefined`. */
+  /** A stdlib WeakMap or WeakSet, alone or in a union with `null`/`undefined`
+   * (including the `WeakMap | WeakSet` pair). */
   private weakCollectionType(type: ts.Type): boolean {
-    return this.weakCollectionNameOf(type) !== null;
+    return this.weakCollectionNamesOf(type) !== null;
   }
 
-  /** The stdlib collection a type denotes — `WeakMap` or `WeakSet`,
-   * alone or with `null`/`undefined` — or null for everything else.
-   * The predicate behind weak-collection lowering and the JavaScript
-   * value read of one of their methods. */
-  weakCollectionNameOf(type: ts.Type): "WeakMap" | "WeakSet" | null {
-    let name: "WeakMap" | "WeakSet" | null = null;
+  /** The stdlib collections a type denotes — `WeakMap`, `WeakSet`, or the
+   * two in a union — alone or with `null`/`undefined`, which `nullable`
+   * reports; null for everything else. The predicate behind
+   * weak-collection lowering and the JavaScript value read of one of
+   * their methods, whose receiver may hold either collection. */
+  weakCollectionNamesOf(
+    type: ts.Type,
+  ): { names: ("WeakMap" | "WeakSet")[]; nullable: boolean } | null {
+    const names: ("WeakMap" | "WeakSet")[] = [];
     const weak = (part: ts.Type): boolean => {
       const symbol = part.getSymbol();
       if (symbol === undefined) return false;
@@ -5383,10 +5387,18 @@ export class Lowerer {
         )
       )
         return false;
-      name = symbolName;
+      if (!names.includes(symbolName)) names.push(symbolName);
       return true;
     };
-    return this.stdlibHandleType(type, weak) ? name : null;
+    if (!this.stdlibHandleType(type, weak)) return null;
+    return {
+      names,
+      nullable:
+        type.isUnionType() &&
+        ts
+          .constituentTypes(type)
+          .some((part) => (part.flags & (ts.TypeFlags.Null | ts.TypeFlags.Undefined)) !== 0),
+    };
   }
 
   /** A type `handle` accepts, alone or with `null`/`undefined`. */
