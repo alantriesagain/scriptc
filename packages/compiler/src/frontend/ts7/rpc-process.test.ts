@@ -30,13 +30,12 @@ test.skipIf(!posix)("a FIFO server echoes, and exits when its transport closes",
   expect(alive(io.pid)).toBe(false);
 });
 
-test.skipIf(!posix)("a FIFO server that cannot start fails its first read", () => {
-  const io = new Ts7FifoIo("/nonexistent/scriptc-ts7-server", []);
-  try {
-    expect(io.read(Buffer.alloc(1), 0, 1)).toBe(0);
-  } finally {
-    io.close();
-  }
+test.skipIf(!posix)("a missing FIFO server fails at construction and tracks nothing", () => {
+  const before = process.listenerCount("exit");
+  expect(() => new Ts7FifoIo("/nonexistent/scriptc-ts7-server", [])).toThrow(
+    "Unable to start TypeScript server",
+  );
+  expect(process.listenerCount("exit")).toBe(before);
 });
 
 test.skipIf(!posix)(

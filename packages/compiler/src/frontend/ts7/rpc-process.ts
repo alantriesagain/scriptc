@@ -135,9 +135,12 @@ class Ts7NamedPipeIo implements Ts7WireIo {
  * this process would stay a zombie after it exits: Node reaps children only
  * from its event loop, which a synchronous compile never returns to. The
  * subshell points its standard streams at /dev/null before it opens the
- * FIFOs, so spawnSync's output pipe closes as soon as the shell exits. */
+ * FIFOs, so spawnSync's output pipe closes as soon as the shell exits. A
+ * missing or non-executable server fails here, before any FIFO exists: the
+ * background subshell would otherwise block opening its input and the failure
+ * would only surface as end of file on the first read. */
 const FIFO_LAUNCH =
-  'i=$1 o=$2; shift 2; mkfifo -m 600 "$i" "$o" || exit 1; ' +
+  'i=$1 o=$2; shift 2; command -v "$1" >/dev/null || exit 127; mkfifo -m 600 "$i" "$o" || exit 1; ' +
   '( exec </dev/null >/dev/null; exec "$@" <"$i" >"$o" ) & echo $!';
 
 /** How long a starting server may take to open its input, in milliseconds. */
