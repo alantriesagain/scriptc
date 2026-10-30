@@ -64,10 +64,19 @@ export interface EarlyExecutableNativeFeatures {
   eventTarget?: boolean;
   wasm?: boolean;
   warningReplace?: boolean;
+  recordViewPartial?: boolean;
   stdioExtended?: boolean;
+  fsFlags?: boolean;
+  strdecDyn?: boolean;
+  processExtras?: boolean;
+  /** Error-taking write completion callbacks: SCR_STREAM_WRITE_ERRORS. */
+  streamWriteErrors?: boolean;
+  /** The process output write slot: SCR_STDIO_WRITE_SLOT. */
+  stdioWriteSlot?: boolean;
   nodeIsland?: boolean;
   moduleNamespace?: boolean;
   moduleNamespaceDyn?: boolean;
+  primitiveWrapper?: boolean;
   zlib: boolean;
   brotli?: boolean;
   assert: boolean;
@@ -116,6 +125,7 @@ export interface EarlyExecutableNativeFeatures {
   dgramDyn: boolean;
   textCodecDyn: boolean;
   watch: boolean;
+  watchFile: boolean;
   foreignFfi: boolean;
   nodeTest: boolean;
   tls: boolean;
@@ -128,6 +138,8 @@ export interface EarlyExecutableNativeFeatures {
   perfLoop: boolean;
   tlsCa: boolean;
   webcrypto: boolean;
+  /** Intl over ICU (scr_intl.c, the ICU archive and its data file). */
+  intl?: boolean;
 }
 
 interface EarlyExecutableCacheStamp {
@@ -177,6 +189,8 @@ export interface EarlyExecutableCacheOptions {
   libnodeIdentity?: () => string | undefined;
   /** Omitted unless --large-pages is set. */
   largePages?: true;
+  /** Omitted unless the build links without huge text (CompileOptions.hugeText). */
+  noHugeText?: true;
   /** Omitted unless --exceptions=rare is set. */
   exceptions?: "rare";
   /** Omitted for the x86-64 baseline (`--target-cpu`). */
@@ -201,6 +215,9 @@ export interface EarlyExecutableCacheOptions {
   /** Omitted unless shape inference's overlay compiles the packages
    * (frontend/shape-inference). */
   shapeOverlay?: true;
+  /** Omitted unless shape inference types the program's own JavaScript
+   * (SCRIPTC_INFER_JS=1, frontend/js-inference.ts). */
+  jsInference?: true;
   /** Raw manifest identity: path and bytes. Native archives remain under the
    * stricter native cache's independent dependency validation. */
   ffiProfile: { path: string; bytes: Uint8Array } | null;
@@ -302,6 +319,7 @@ const BOOLEAN_NATIVE_KEYS = [
   "dgramDyn",
   "textCodecDyn",
   "watch",
+  "watchFile",
   "foreignFfi",
   "nodeTest",
   "tls",
@@ -348,6 +366,7 @@ function cacheKey(options: EarlyExecutableCacheOptions): string {
     ...(options.windowsSubsystem === "gui" ? ["windows-subsystem-gui"] : []),
     ...(options.detachedExit ? ["detached-exit"] : []),
     ...(options.largePages ? ["large-pages"] : []),
+    ...(options.noHugeText ? ["no-huge-text"] : []),
     ...(options.exceptions === "rare" ? ["exceptions-rare"] : []),
     ...targetCpuKeyParts(options.targetCpu),
     ...cpuDispatchKeyParts(options.cpuDispatch),
@@ -357,6 +376,8 @@ function cacheKey(options: EarlyExecutableCacheOptions): string {
     ...(options.youngNursery ? ["young-nursery"] : []),
     ...(options.nodeIslands !== undefined ? [`node-islands:${options.nodeIslands}`] : []),
     ...(options.heapCensus ? ["heap-census"] : []),
+    ...(options.shapeOverlay ? ["shape-overlay"] : []),
+    ...(options.jsInference ? ["js-inference"] : []),
     options.npmStatic === null
       ? "<npm-static-off>"
       : options.npmStatic === "auto"
@@ -398,6 +419,7 @@ function routeKey(options: Omit<EarlyExecutableRouteOptions, "nativeEnvironment"
   if (options.windowsSubsystem === "gui") hash.update("windows-subsystem-gui\0");
   if (options.detachedExit) hash.update("detached-exit\0");
   if (options.largePages) hash.update("large-pages\0");
+  if (options.noHugeText) hash.update("no-huge-text\0");
   if (options.exceptions === "rare") hash.update("exceptions-rare\0");
   for (const part of targetCpuKeyParts(options.targetCpu)) hash.update(`${part}\0`);
   for (const part of cpuDispatchKeyParts(options.cpuDispatch)) hash.update(`${part}\0`);
@@ -407,6 +429,8 @@ function routeKey(options: Omit<EarlyExecutableRouteOptions, "nativeEnvironment"
   if (options.youngNursery) hash.update("young-nursery\0");
   if (options.nodeIslands !== undefined) hash.update(`node-islands:${options.nodeIslands}\0`);
   if (options.heapCensus) hash.update("heap-census\0");
+  if (options.shapeOverlay) hash.update("shape-overlay\0");
+  if (options.jsInference) hash.update("js-inference\0");
   hash
     .update(
       options.npmStatic === null
