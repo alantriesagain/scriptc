@@ -107,6 +107,9 @@ export interface RuntimeFeatureSet extends NativeLinkFeatures {
   utilTiming: boolean;
   dynBuffer: boolean;
   builtinValues: boolean;
+  /** A standard library prototype object read as a value in a JavaScript
+   * source (scr_dyn_stdlib_prototype.c). */
+  stdlibPrototypeValue?: boolean;
   computedRequire: boolean;
   warningReplace: boolean;
   recordViewPartial: boolean;
@@ -330,6 +333,7 @@ export function effectiveRuntimeFeatures(
     utilTiming: features.utilTiming === true,
     dynBuffer: features.dynBuffer === true,
     builtinValues: features.builtinValues === true,
+    stdlibPrototypeValue: features.stdlibPrototypeValue === true,
     computedRequire: features.computedRequire === true,
     warningReplace: features.warningReplace === true,
     recordViewPartial: features.recordViewPartial === true,
