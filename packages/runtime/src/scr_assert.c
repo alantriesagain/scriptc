@@ -2437,58 +2437,101 @@ void scr_assert_loose_deep_result(bool equal, bool negated, ScrStr *msg, bool ha
                         g_record_expected ? g_record_expected : undef, negated, msg, has_msg);
 }
 
-/* One key of Node's expectedException over a validation object or an
- * error instance (compareExceptionKey): the caught value has the key, its
- * own or inherited (`key in actual`), and its value (`actual[key]`, read
- * through the prototype chain, so an Error's inherited name compares)
- * deep-strict-equals the expected's, or the value is a string and the
- * expected's a RegExp that matches it. *value answers the caught value's
- * (+1, NULL when it lacks the key) and *matched whether a RegExp matched.
- * False with an exception pending when a read throws. */
-static bool scr_assert_exception_key(ScrDyn *actual, const ScrDynProp *e, ScrDyn **value,
-                                     bool *matched) {
-  *value = NULL;
-  *matched = false;
-  ScrStr *key = scr_str_new(e->key, e->key_len);
-  bool ok = scr_dyn_in(actual, key);
-  if (ok && !scr_exc_pending()) {
-    ScrDyn *key_value = scr_dyn_new_str(key);
-    *value = scr_dyn_reflect_get(actual, key_value, actual);
-    scr_dyn_release(key_value);
-    if (*value == NULL) {
-      ok = false;
-    } else if ((*value)->kind == SCR_DYN_STR && e->value->kind == SCR_DYN_HANDLE &&
-               e->value->v.handle.tag == SCR_DYNH_REGEXP) {
-      /* RegExp.prototype.exec through the handle's own dispatch, so this
-       * unit links no regex code */
-      const ScrDynHandleOps *ops = scr_dyn_handle_ops_of(e->value);
-      ScrDyn *match = ops && ops->invoke
-                          ? ops->invoke(e->value->v.handle.ptr, e->value, "exec", value, 1, "exec")
-                          : NULL;
-      *matched = match != NULL && match->kind != SCR_DYN_NULL;
-      ok = *matched || (!scr_exc_pending() && scr_assert_dyn_deep_eq(*value, e->value));
-      scr_dyn_release(match);
-    } else {
-      ok = scr_assert_dyn_deep_eq(*value, e->value);
+/* actual[key], read through the prototype chain (+1), or NULL with an
+ * exception pending. */
+static ScrDyn *scr_assert_key_read(ScrDyn *object, const ScrStr *key) {
+  ScrDyn *key_value = scr_dyn_new_str((ScrStr *)key);
+  ScrDyn *value = scr_dyn_reflect_get(object, key_value, object);
+  scr_dyn_release(key_value);
+  return value;
+}
+
+static bool scr_assert_is_regexp(const ScrDyn *value) {
+  return value != NULL && value->kind == SCR_DYN_HANDLE && value->v.handle.tag == SCR_DYNH_REGEXP;
+}
+
+/* RegExpPrototypeExec(re, text) !== null, through the handle's own
+ * dispatch, so this unit links no regex code. False with an exception
+ * pending when exec throws. */
+static bool scr_assert_regexp_matches(ScrDyn *re, ScrDyn *text) {
+  const ScrDynHandleOps *ops = scr_dyn_handle_ops_of(re);
+  ScrDyn *match = ops && ops->invoke ? ops->invoke(re->v.handle.ptr, re, "exec", &text, 1, "exec") : NULL;
+  bool matched = match != NULL && match->kind != SCR_DYN_NULL;
+  scr_dyn_release(match);
+  return matched && !scr_exc_pending();
+}
+
+/* Node's `typeof actual[key] === 'string' && isRegExp(obj[key]) &&
+ * RegExpPrototypeExec(obj[key], actual[key]) !== null`, with its reads in
+ * its order. False with an exception pending when a read throws. */
+static bool scr_assert_regexp_key_matches(ScrDyn *actual, const ScrStr *key, ScrDyn *obj) {
+  ScrDyn *probe = scr_assert_key_read(actual, key);
+  if (probe == NULL) return false;
+  bool text = probe->kind == SCR_DYN_STR;
+  scr_dyn_release(probe);
+  if (!text) return false;
+  ScrDyn *pattern = scr_assert_key_read(obj, key);
+  if (pattern == NULL) return false;
+  bool regexp = scr_assert_is_regexp(pattern);
+  scr_dyn_release(pattern);
+  if (!regexp) return false;
+  pattern = scr_assert_key_read(obj, key);
+  if (pattern == NULL) return false;
+  ScrDyn *value = scr_assert_key_read(actual, key);
+  bool matched = value != NULL && scr_assert_is_regexp(pattern) && scr_assert_regexp_matches(pattern, value);
+  scr_dyn_release(value);
+  scr_dyn_release(pattern);
+  return matched;
+}
+
+/* Node's Comparison(obj, keys, actual) (+1): for each key in `obj`, the
+ * actual value when the key holds a RegExp that matches the actual string
+ * (only when `actual` is given), else obj[key]. NULL with an exception
+ * pending when a read throws. */
+static ScrDyn *scr_assert_comparison(ScrDyn *obj, ScrStr *const *keys, size_t count, ScrDyn *actual) {
+  ScrDyn *out = scr_dyn_new_obj();
+  for (size_t i = 0; i < count; i++) {
+    bool present = scr_dyn_in(obj, keys[i]);
+    if (scr_exc_pending()) goto failed;
+    if (!present) continue;
+    ScrDyn *value = NULL;
+    if (actual != NULL) {
+      bool matched = scr_assert_regexp_key_matches(actual, keys[i], obj);
+      if (scr_exc_pending()) goto failed;
+      if (matched) value = scr_assert_key_read(actual, keys[i]);
     }
+    if (value == NULL && !scr_exc_pending()) value = scr_assert_key_read(obj, keys[i]);
+    if (value == NULL) goto failed;
+    scr_dyn_obj_set(out, keys[i]->data, keys[i]->len, value);
   }
-  scr_str_release(key);
-  return ok && !scr_exc_pending();
+  return out;
+failed:
+  scr_dyn_release(out);
+  return NULL;
 }
 
 /* Node's expectedException over an object expected (assert.throws/rejects
- * second argument): a validation object's own enumerable keys, or every
- * key of an error instance's encoding (the %error marker skipped;
- * name/message/code is its surface, the keys Node adds for an Error),
- * each compared by scr_assert_exception_key. Extra ACTUAL keys are fine.
- * A validation object without keys throws Node's ERR_INVALID_ARG_VALUE.
- * A mismatch fails with Node's generated message: the deep-equal diff of
- * two Comparison objects holding the compared keys, the caught value's
- * where it has them and the expected's (or, for a RegExp that matched,
- * the caught value's) on the other side. A primitive caught value fails
- * with the deep-equal message over the two values. */
+ * second argument), in Node's order. The keys are a validation object's
+ * own enumerable keys, or every key of an error instance's encoding (the
+ * %error marker skipped; name/message/code is its surface, the keys Node
+ * adds for an Error), taken once before the comparison. Values are read
+ * when Node's expressions read them, each held only while it is used, so
+ * a caught object's getter that changes the validation object is seen as
+ * Node sees it.
+ *   - A string value that the expected RegExp matches passes the key.
+ *   - Otherwise the caught value must have the key, own or inherited, and
+ *     its value must deep-strict-equal the expected one
+ *     (compareExceptionKey). The first key that fails ends the comparison:
+ *     with a custom message it is thrown as it is; without one the message
+ *     is Node's deep-equal diff of two Comparison objects that read the
+ *     keys again.
+ * A validation object without keys throws ERR_INVALID_ARG_VALUE, and a
+ * primitive caught value fails with the deep-equal message over the two
+ * values. The AssertionError's actual and expected are the caught value
+ * and the expected object, and its operator names the assert function. */
 void scr_assert_expects_err_dyn(ScrDyn *actual, ScrDyn *expected, ScrStr *msg, bool has_msg,
                                 bool rejection) {
+  const char *op = rejection ? "rejects" : "throws";
   if (expected->kind != SCR_DYN_OBJ) {
     scr_assert_eq_dyn(actual, expected, false, true, msg, has_msg);
     return;
@@ -2496,7 +2539,7 @@ void scr_assert_expects_err_dyn(ScrDyn *actual, ScrDyn *expected, ScrStr *msg, b
   if (actual->kind == SCR_DYN_NULL || !scr_dyn_is_object(actual)) {
     /* A primitive caught value fails outright: Node's deep-equal
      * AssertionError over the two values, named for the assert function. */
-    scr_assert_record(scr_dyn_retain(actual), scr_dyn_retain(expected), rejection ? "rejects" : "throws");
+    scr_assert_record(scr_dyn_retain(actual), scr_dyn_retain(expected), op);
     if (has_msg && msg->len > 0) {
       scr_assert_fail(scr_str_retain(msg), false);
       return;
@@ -2506,32 +2549,19 @@ void scr_assert_expects_err_dyn(ScrDyn *actual, ScrDyn *expected, ScrStr *msg, b
     return;
   }
   bool is_error = scr_dyn_obj_get(expected, "%error", 6) != NULL;
-  bool ok = true;
-  size_t keys = 0;
-  ScrDyn *have = scr_dyn_new_obj();
-  ScrDyn *want = scr_dyn_new_obj();
-  for (size_t i = 0; i < scr_dyn_obj_count(expected); i++) {
+  size_t total = scr_dyn_obj_count(expected);
+  ScrStr **keys = total > 0 ? malloc(total * sizeof *keys) : NULL;
+  if (total > 0 && keys == NULL) scr_trap("scriptc: out of memory\n");
+  size_t count = 0;
+  for (size_t i = 0; i < total; i++) {
     ScrDynProp e = scr_dyn_obj_prop_at(expected, i);
     if (e.key_len == 6 && memcmp(e.key, "%error", 6) == 0) continue;
     if (!is_error && !e.enumerable) continue;
-    keys++;
-    ScrDyn *value;
-    bool matched;
-    if (!scr_assert_exception_key(actual, &e, &value, &matched)) ok = false;
-    if (scr_exc_pending()) {
-      scr_dyn_release(value);
-      scr_dyn_release(have);
-      scr_dyn_release(want);
-      return;
-    }
-    if (value != NULL) scr_dyn_obj_set(have, e.key, e.key_len, scr_dyn_retain(value));
-    scr_dyn_obj_set(want, e.key, e.key_len, scr_dyn_retain(matched ? value : e.value));
-    scr_dyn_release(value);
+    keys[count++] = scr_str_new(e.key, e.key_len);
   }
-  if (keys == 0 && !is_error) {
-    scr_dyn_release(have);
-    scr_dyn_release(want);
-    if (scr_dyn_obj_count(expected) == 0) {
+  if (count == 0 && !is_error) {
+    free(keys);
+    if (total == 0) {
       /* Node's inspect of the object it rejects */
       static const char text[] = "The argument 'error' may not be an empty object. Received {}";
       scr_throw_error_msg_code(SCR_ERR_TYPE, text, sizeof text - 1, "ERR_INVALID_ARG_VALUE");
@@ -2540,20 +2570,49 @@ void scr_assert_expects_err_dyn(ScrDyn *actual, ScrDyn *expected, ScrStr *msg, b
     }
     return;
   }
-  if (ok) {
-    scr_dyn_release(have);
-    scr_dyn_release(want);
+  bool failed = false;
+  for (size_t i = 0; i < count && !failed; i++) {
+    bool matched = scr_assert_regexp_key_matches(actual, keys[i], expected);
+    if (!matched && !scr_exc_pending()) {
+      /* compareExceptionKey */
+      bool present = scr_dyn_in(actual, keys[i]);
+      if (!scr_exc_pending()) {
+        ScrDyn *have = present ? scr_assert_key_read(actual, keys[i]) : NULL;
+        if (!present) {
+          failed = true;
+        } else if (have != NULL) {
+          ScrDyn *again = scr_assert_key_read(expected, keys[i]);
+          failed = again == NULL || !scr_assert_dyn_deep_eq(have, again);
+          scr_dyn_release(again);
+        }
+        scr_dyn_release(have);
+      }
+    }
+    if (scr_exc_pending()) break;
+  }
+  if (!failed || scr_exc_pending()) {
+    for (size_t i = 0; i < count; i++) scr_str_release(keys[i]);
+    free(keys);
     return;
   }
   /* Node attaches the caught value and the expected object themselves,
    * and names the assert function as the operator. */
-  scr_assert_record(scr_dyn_retain(actual), scr_dyn_retain(expected), rejection ? "rejects" : "throws");
   if (has_msg && msg->len > 0) {
-    scr_dyn_release(have);
-    scr_dyn_release(want);
+    for (size_t i = 0; i < count; i++) scr_str_release(keys[i]);
+    free(keys);
+    scr_assert_record(scr_dyn_retain(actual), scr_dyn_retain(expected), op);
     scr_assert_fail(scr_str_retain(msg), false);
     return;
   }
+  ScrDyn *have = scr_assert_comparison(actual, keys, count, NULL);
+  ScrDyn *want = have != NULL ? scr_assert_comparison(expected, keys, count, actual) : NULL;
+  for (size_t i = 0; i < count; i++) scr_str_release(keys[i]);
+  free(keys);
+  if (want == NULL) {
+    scr_dyn_release(have);
+    return;
+  }
+  scr_assert_record(scr_dyn_retain(actual), scr_dyn_retain(expected), op);
   scr_assert_comparison_labels = true;
   ScrStr *text = scr_assert_dyn_diff_message(have, want, true, NULL, msg, has_msg, scr_assert_diff_full());
   scr_assert_comparison_labels = false;
