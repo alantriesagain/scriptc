@@ -43,6 +43,7 @@ import { isFrontendIsland } from "../node-islands/boundary.js";
 import { builtinModules } from "node:module";
 import { dirname, isAbsolute, resolve } from "node:path";
 import * as ts from "./ts7/adapter.js";
+import { isSourcePhaseImport } from "./ts7/ast-node.js";
 import type { ScrDiagnostic } from "../diagnostics/diagnostic.js";
 import {
   commonJsModuleSyntaxDiag,
@@ -6075,6 +6076,14 @@ function preflight7(load: LoadResult): {
       }
       if (!ts.isImportDeclaration(stmt)) continue;
       if (erasedTypeOnlyImport(stmt)) continue;
+      // `import source x from "./x.wasm"` (TypeScript 7.1) binds the module's source object, such
+      // as a WebAssembly.Module; compiled programs do not support it yet.
+      if (isSourcePhaseImport(stmt.importClause)) {
+        diags.push(
+          unsupportedDiag("SC1090", locOf7(stmt), "source phase imports (`import source`)"),
+        );
+        continue;
+      }
 
       // Import-like nodes whose specifier the parse could not shape into a
       // string literal — the jsdoc `/** @import x = require(...) */`
