@@ -66,6 +66,9 @@ export interface EarlyExecutableNativeFeatures {
   warningReplace?: boolean;
   recordViewPartial?: boolean;
   stdioExtended?: boolean;
+  fsFlags?: boolean;
+  strdecDyn?: boolean;
+  processExtras?: boolean;
   /** Error-taking write completion callbacks: SCR_STREAM_WRITE_ERRORS. */
   streamWriteErrors?: boolean;
   /** The process output write slot: SCR_STDIO_WRITE_SLOT. */

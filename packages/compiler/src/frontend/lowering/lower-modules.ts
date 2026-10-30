@@ -4,6 +4,7 @@ import { globalValuesInstall, installsGlobalValues } from "./global-values.js";
 import type { TypeFailureSlot } from "../../diagnostics/diagnostic.js";
 import { THREADS_MODULE } from "../threads-import.js";
 import { collectIslandImport, collectIslandRequires } from "./lower-node-island.js";
+import { staticString } from "./builtins/module-resolution.js";
 import { NODE_API_MODULE } from "../node-api-import.js";
 import { positionTag } from "./structural-positions.js";
 import { EXPERIMENTAL_MODULE } from "../experimental-import.js";
@@ -799,9 +800,10 @@ function collectDynamicImports(lowerer: Lowerer, sf: ts.SourceFile): void {
       node.expression.kind === ts.SyntaxKind.ImportKeyword &&
       node.arguments.nodes.length >= 1 &&
       node.arguments.nodes[0] !== undefined &&
-      ts.isStringLiteralLike(node.arguments.nodes[0])
+      staticString(lowerer, node.arguments.nodes[0]) !== null
     ) {
-      const spec = node.arguments.nodes[0].text;
+      // A constant expression names its module as surely as a literal.
+      const spec = staticString(lowerer, node.arguments.nodes[0]!)!;
       if (lowerer.externalTypes.has(spec)) {
         return undefined;
       }
@@ -820,9 +822,14 @@ function collectDynamicImports(lowerer: Lowerer, sf: ts.SourceFile): void {
           return undefined;
         }
         const modSym = lowerer.checker.getSymbolAtLocation(node.arguments.nodes[0]);
+        // A folded specifier carries no module symbol on its argument (the
+        // text comes from a `const`, not a literal), so fall back to the
+        // checker's program import resolution.
+        const folded = resolveImport(lowerer.program, sf, spec);
         const ownModule =
-          modSym !== undefined &&
-          modSym.declarations.some((d) => ts.isSourceFile(d) && !d.isDeclarationFile);
+          (modSym !== undefined &&
+            modSym.declarations.some((d) => ts.isSourceFile(d) && !d.isDeclarationFile)) ||
+          (folded !== null && !folded.isDeclarationFile);
         const builtin = canonicalBuiltinModule(spec);
         const res = ownModule
           ? ({ kind: "program-module" } as const)
