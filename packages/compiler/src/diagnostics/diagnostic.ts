@@ -234,6 +234,18 @@ export function nodeIslandModuleDiag(message: string, loc: SrcLoc): ScrDiagnosti
   };
 }
 
+/** SC8006 — a program module that runs in a Node island names a data file
+ * by a path where there is none while a file of that name is in its
+ * directory: the build ships data files by their exact path only. */
+export function nodeIslandDataFileDiag(message: string, loc: SrcLoc): ScrDiagnostic {
+  return {
+    code: "SC8006",
+    message,
+    loc,
+    hint: "name the data file by its path relative to the module that reads it; the build ships a Node island module's data files by their exact path",
+  };
+}
+
 /* ── SC6xxx: divergences from Node (warnings) ─────────────────────────── */
 
 /** SC6001 — a value passed to (or declared as) a narrower record type is

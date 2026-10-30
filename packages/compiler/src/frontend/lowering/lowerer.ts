@@ -293,7 +293,6 @@ import {
   intersectionTypeDiag,
   noLoweringDiag,
   overloadedSignatureTypeDiag,
-  projectConfigDiag,
   recordShapeMismatchDiag,
   stdlibSnapshotValueUseDiag,
   unsupportedNativeApiDiag,
@@ -787,8 +786,7 @@ import {
   maybePromiseUnionOf,
   promiseArmedUnionOf,
 } from "./maybe-promise.js";
-import { NodeIslandModuleCollector, declaredIslandFiles } from "../../node-islands/modules.js";
-import { readProjectConfig } from "../../project-config.js";
+import { NodeIslandModuleCollector } from "../../node-islands/modules.js";
 
 /** Entry function name. '%' cannot appear in a TS identifier, so a user
  * function can never collide with it (mangling is injective per prefix). */
@@ -9852,7 +9850,6 @@ export class Lowerer {
     refuseX509DynValues(this, functions);
     markInferredFactChecks(functions, this.program);
     const sloppyDynWrites = sloppyDynamicWrites(this, functions);
-    if (this.usesNodeIsland) this.addDeclaredIslandFiles();
     const module: IrModule | null =
       this.diags.length > 0
         ? null
@@ -11146,25 +11143,6 @@ export class Lowerer {
       return;
     }
     this.diags.push(d);
-  }
-
-  /** `scriptc.nodeIslands.files`: files the program's island modules read
-   * without naming their path ship with those modules. A declared path
-   * without a file is SC8004. */
-  private addDeclaredIslandFiles(): void {
-    if (this.nodeIslands === null || this.nodeIslands.modules.size === 0) return;
-    const declared = declaredIslandFiles(readProjectConfig(this.entry.fileName));
-    const loc: SrcLoc = { file: this.entry.fileName, start: 0, end: 0 };
-    for (const path of declared.missing)
-      this.pushDiag(
-        projectConfigDiag(
-          "scriptc.nodeIslands.files",
-          `names ${path}, which does not exist`,
-          "remove the entry or create the file",
-          loc,
-        ),
-      );
-    for (const file of declared.files) this.nodeIslandModules.addDeclaredFile(file);
   }
 
   /** The module's Node island record: the collected module tree, with each

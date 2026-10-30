@@ -2,10 +2,8 @@ import { mkdirSync, mkdtempSync, realpathSync, symlinkSync, writeFileSync } from
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { describe, expect, test } from "vitest";
-import { readProjectConfig } from "../project-config.js";
 import {
   NodeIslandModuleCollector,
-  declaredIslandFiles,
   namedDataPaths,
   nodeIslandManifest,
   readNodeIslandModules,
@@ -31,7 +29,7 @@ describe("data paths a module names", () => {
       // "comment.txt"
       const d = \`\${dir}/template.txt\`;
     `);
-    expect([...names].sort()).toEqual([
+    expect([...names.keys()].sort()).toEqual([
       "assets/config.json",
       "fallback",
       "fallback/payload.txt",
@@ -336,35 +334,20 @@ describe("the collected module tree", () => {
     expect(paths.filter((path) => !path.endsWith(".cjs"))).toEqual(["assets/config.json"]);
   });
 
-  test("files scriptc.nodeIslands.files declares ship with the island modules", () => {
+  test("a named file that is only elsewhere in the module's directory is a build error", () => {
     const root = project({
-      "package.json": JSON.stringify({
-        scriptc: { nodeIslands: { files: ["data/*.json", "docs/readme.txt", "absent.bin"] } },
-      }),
-      "main.ts": "",
-      "data/a.json": "{}",
-      "data/b.json": "{}",
-      "data/c.txt": "",
-      "data/nested/d.json": "{}",
-      "docs/readme.txt": "",
-      "node_modules/x/data/e.json": "{}",
+      "src/main.ts": "",
+      "src/loader.cjs":
+        'const fs = require("node:fs");\nfs.readFileSync(__dirname + "/config.json");\n',
+      "src/private/config.json": '{ "token": "secret" }',
     });
-    const declared = declaredIslandFiles(readProjectConfig(join(root, "main.ts")));
-    expect(declared.files).toEqual([
-      join(root, "data/a.json"),
-      join(root, "data/b.json"),
-      join(root, "docs/readme.txt"),
-    ]);
-    expect(declared.missing).toEqual(["absent.bin"]);
     const collector = new NodeIslandModuleCollector();
-    expect(collector.add(join(root, "main.ts"), "./data/a.json")).toBeNull();
-    for (const file of declared.files) collector.addDeclaredFile(file);
-    expect(collector.tree()!.files.map((file) => file.path)).toEqual([
-      "data/a.json",
-      "data/b.json",
-      "docs/readme.txt",
-      "package.json",
-    ]);
+    const problem = collector.add(join(root, "src/main.ts"), "./loader.cjs");
+    expect(problem).toBe(
+      `${join(root, "src/loader.cjs")}:2 names the file 'config.json', which is not at that path beside the module; the build ships a module's data files by their exact path, so 'private/config.json' does not ship with the Node island. Name the file by its path relative to the module ('private/config.json')`,
+    );
+    expect(collector.isDataFileProblem(problem!)).toBe(true);
+    expect(collector.tree()!.files.map((file) => file.path)).not.toContain("private/config.json");
   });
 
   test("the manifest names relative paths only, and the data is checked against it", () => {

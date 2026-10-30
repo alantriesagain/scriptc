@@ -14,8 +14,6 @@
  *       "zod": { "shapes": false }       // no shape-inference overlay
  *     },
  *     "nodeIslands": { "auto": true, "modules": ["src/plugins/*.ts"] },
- *     // files island modules of the program read, shipped with them
- *     // (node-islands/modules.ts): "nodeIslands": { "files": ["data/*.json"] }
  *     "wasm": ["build/module.wasm"],
  *     "typePatches": {                   // frontend/type-patches/layer.ts
  *       "commander@^15.0.0": {
@@ -62,10 +60,6 @@ export interface NodeIslandsSetting {
   /** User modules (paths or globs relative to the package.json) that run
    * in Node. */
   modules: string[];
-  /** Files (paths or globs relative to the package.json) that ship with
-   * the island modules of the program, beside the files their source names
-   * by path (node-islands/modules.ts). */
-  files: string[];
   /** The `node` executable recorded into the binary. */
   node: string | null;
   /** A semver range checked at the helper handshake. */
@@ -137,7 +131,6 @@ const PACKAGE_SETTING_KEYS = [...Object.keys(PACKAGE_OBJECT_KEYS), "shapes"];
 const NODE_ISLANDS_KEYS = [
   "auto",
   "modules",
-  "files",
   "node",
   "nodeVersion",
   "packaging",
@@ -161,7 +154,6 @@ function defaultNodeIslands(): NodeIslandsSetting {
   return {
     auto: true,
     modules: [],
-    files: [],
     node: null,
     nodeVersion: null,
     packaging: "embedded",
@@ -352,22 +344,6 @@ export function parseProjectConfig(manifest: string, text: string): ProjectConfi
               `write "modules": ["src/plugins/loader.ts"]`,
             );
           } else setting.modules = list;
-        } else if (key === "files") {
-          const list: string[] = [];
-          let ok = Array.isArray(v);
-          if (Array.isArray(v)) {
-            for (const entry of v as unknown[]) {
-              if (typeof entry === "string" && entry !== "") list.push(entry);
-              else ok = false;
-            }
-          }
-          if (!ok) {
-            problem(
-              ["nodeIslands", key],
-              `must be an array of file paths or globs, not ${shown(v)}`,
-              `write "files": ["data/config.json"]`,
-            );
-          } else setting.files = list;
         } else if (key === "publicEnv") {
           const list: string[] = [];
           let ok = Array.isArray(v);

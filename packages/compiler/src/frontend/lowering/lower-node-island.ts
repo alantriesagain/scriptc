@@ -43,6 +43,7 @@ import { resolveBareModule } from "../resolve.js";
 import {
   nativeSubclassOfIslandDiag,
   nodeIslandBoundaryDiag,
+  nodeIslandDataFileDiag,
   nodeIslandModuleDiag,
 } from "../../diagnostics/diagnostic.js";
 import {
@@ -140,7 +141,10 @@ export function lowerNodeApiCall(
   const caller = callerPath(call);
   const problem = lowerer.nodeIslandModules.add(caller, specifierNode.text);
   if (problem !== null) {
-    lowerer.pushDiag(nodeIslandModuleDiag(`${surface}: ${problem}`, locOf(specifierNode)));
+    const diag = lowerer.nodeIslandModules.isDataFileProblem(problem)
+      ? nodeIslandDataFileDiag
+      : nodeIslandModuleDiag;
+    lowerer.pushDiag(diag(`${surface}: ${problem}`, locOf(specifierNode)));
     throw new PoisonError();
   }
   const specifier = lowerer.lowerExprExpecting(specifierNode, STRING);
@@ -373,7 +377,10 @@ function islandLoadPath(lowerer: Lowerer, path: string, loc: SrcLoc): IrExpr {
   }
   const problem = lowerer.nodeIslandModules.addLoaded(real);
   if (problem !== null) {
-    lowerer.pushDiag(nodeIslandModuleDiag(problem, loc));
+    const diag = lowerer.nodeIslandModules.isDataFileProblem(problem)
+      ? nodeIslandDataFileDiag
+      : nodeIslandModuleDiag;
+    lowerer.pushDiag(diag(problem, loc));
     throw new PoisonError();
   }
   lowerer.nodeIslandLoads.push({ literal, path: real });
