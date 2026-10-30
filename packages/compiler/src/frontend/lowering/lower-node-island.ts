@@ -16,11 +16,12 @@
  * checked against the declared result type, like `JSON.parse(s) as T`; a
  * thrown Error crosses as its nearest intrinsic class with its message and
  * string `code`. */
-import { readFileSync, realpathSync } from "node:fs";
+import { readFileSync, realpathSync, statSync } from "node:fs";
 import { resolveFrom } from "../../node-islands/resolve.js";
-import { dirname, isAbsolute, join } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import * as ts from "../ts7/adapter.js";
 import { isJsSourceFile, locOf } from "../program.js";
+import { isRelativeSpecifier } from "../workspace-registry.js";
 import type { NodeApiMember } from "../node-api-import.js";
 import { PoisonError, newFnCtx, type Lowerer } from "./lowerer.js";
 import {
@@ -43,14 +44,16 @@ import { resolveBareModule } from "../resolve.js";
 import {
   nativeSubclassOfIslandDiag,
   nodeIslandBoundaryDiag,
+  nodeIslandDataFileDiag,
   nodeIslandModuleDiag,
 } from "../../diagnostics/diagnostic.js";
 import {
   crossingOf,
   isForeignType,
+  isIslandProgramModule,
   isIslandSubclassDecl,
   markIslandSubclass,
-  islandPackageOfFile,
+  islandOwnerOfFile,
   type NodeIslandSet,
 } from "../../node-islands/boundary.js";
 import { stripTypeWrappers } from "./typed-arguments.js";
@@ -139,7 +142,10 @@ export function lowerNodeApiCall(
   const caller = callerPath(call);
   const problem = lowerer.nodeIslandModules.add(caller, specifierNode.text);
   if (problem !== null) {
-    lowerer.pushDiag(nodeIslandModuleDiag(`${surface}: ${problem}`, locOf(specifierNode)));
+    const diag = lowerer.nodeIslandModules.isDataFileProblem(problem)
+      ? nodeIslandDataFileDiag
+      : nodeIslandModuleDiag;
+    lowerer.pushDiag(diag(`${surface}: ${problem}`, locOf(specifierNode)));
     throw new PoisonError();
   }
   const specifier = lowerer.lowerExprExpecting(specifierNode, STRING);
@@ -289,21 +295,54 @@ export function isEsmFile(file: string): boolean {
   }
 }
 
+/** The file a relative (or absolute) specifier names from `fromFile`, as
+ * Node's CommonJS/ESM resolution would find it, or null. Extension fallback
+ * and directory indexes only: an island module is a file the program
+ * already loaded, and `exports` maps stay Node's job. */
+function relativeIslandFile(fromFile: string, spec: string): string | null {
+  const base = isAbsolute(spec) ? spec : resolve(dirname(fromFile), spec);
+  const candidates = [base];
+  if (!/\.[cm]?js$/.test(base)) {
+    for (const ext of [".js", ".cjs", ".mjs"]) candidates.push(base + ext);
+  }
+  for (const ext of [".js", ".cjs", ".mjs"]) candidates.push(join(base, `index${ext}`));
+  for (const candidate of candidates) {
+    try {
+      if (statSync(candidate).isFile()) return candidate;
+    } catch {
+      /* the next candidate */
+    }
+  }
+  return null;
+}
+
 /** The island module file `spec` names from `fromFile`, or null when the
- * specifier does not resolve into an island package. */
+ * specifier does not resolve into an island package or module. */
 export function islandModuleFile(
   islands: NodeIslandSet,
   fromFile: string,
   spec: string,
   kind: "import" | "require",
 ): string | null {
-  const js = resolveBareModule(fromFile, spec, "js-only", kind);
-  if (js === null) return null;
-  if (islandPackageOfFile(islands, js.typesFile) === null) return null;
+  let file: string;
+  if (isRelativeSpecifier(spec) || isAbsolute(spec)) {
+    // A program module the pre-scan put in a Node island (DESIGN.md note 1
+    // §3.2): the file itself is the island, resolved as Node would.
+    if (islands.modules.size === 0) return null;
+    const resolved = relativeIslandFile(fromFile, spec);
+    if (resolved === null) return null;
+    if (islandOwnerOfFile(islands, resolved) === null) return null;
+    file = resolved;
+  } else {
+    const js = resolveBareModule(fromFile, spec, "js-only", kind);
+    if (js === null) return null;
+    if (islandOwnerOfFile(islands, js.typesFile) === null) return null;
+    file = js.typesFile;
+  }
   try {
-    return realpathSync(js.typesFile);
+    return realpathSync(file);
   } catch {
-    return js.typesFile;
+    return file;
   }
 }
 
@@ -339,7 +378,10 @@ function islandLoadPath(lowerer: Lowerer, path: string, loc: SrcLoc): IrExpr {
   }
   const problem = lowerer.nodeIslandModules.addLoaded(real);
   if (problem !== null) {
-    lowerer.pushDiag(nodeIslandModuleDiag(problem, loc));
+    const diag = lowerer.nodeIslandModules.isDataFileProblem(problem)
+      ? nodeIslandDataFileDiag
+      : nodeIslandModuleDiag;
+    lowerer.pushDiag(diag(problem, loc));
     throw new PoisonError();
   }
   lowerer.nodeIslandLoads.push({ literal, path: real });
@@ -369,8 +411,16 @@ function loadIslandModule(lowerer: Lowerer, path: string, loc: SrcLoc): IrExpr {
 /** A static import's load: `nodeIsland.defer(path, snapshot)`, which the
  * build decides after lowering (node-islands/snapshot.ts, scope-B NI-7):
  * a module proved effect-free at load keeps it with its interface snapshot
- * and evaluates on first use; any other becomes nodeIsland.require. */
+ * and evaluates on first use; any other becomes nodeIsland.require.
+ *
+ * A program module that runs in an island loads eagerly
+ * (`nodeIsland.require`): deciding a deferral means evaluating the module
+ * in the build-time probe, and the build never runs the program's own
+ * source. */
 function deferIslandModule(lowerer: Lowerer, path: string, loc: SrcLoc): IrExpr {
+  const islands = lowerer.nodeIslands;
+  if (islands !== null && isIslandProgramModule(islands, path))
+    return loadIslandModule(lowerer, path, loc);
   return {
     kind: "libCall",
     fn: "nodeIsland.defer",

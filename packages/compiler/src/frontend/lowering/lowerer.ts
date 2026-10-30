@@ -249,6 +249,7 @@ import {
 import { DeferredModuleInitializers } from "./deferred-module-initializers.js";
 import { finalizeClassMethodValues } from "./class-method-values.js";
 import { finalizePrivateBrands } from "./private-brands.js";
+import { finalizeFunctionNames } from "./function-names.js";
 import { type ClassSymbolKey, INSPECT_CUSTOM_MEMBER, tableKeyFieldType } from "./symbol-fields.js";
 import type { HttpClientFnBinding } from "./lower-server.js";
 export type { WidthLift } from "./width-lift.js";
@@ -3826,6 +3827,9 @@ export class Lowerer {
   >();
   /** Classes used as ThreadSlots keys: their hierarchies carry a slot word. */
   readonly threadSlotKeys = new Set<string>();
+  /** The JavaScript names of object literals' methods, by lifted function
+   * (function-names.ts). */
+  readonly objectMethodNames = new Map<string, string>();
   readonly forkTargetIdByPath = new Map<string, number>();
   /** Namespace ModuleBlocks this program lowers, filled by splitFiles:
    * "flattened" — an instantiated namespace whose body joined the file's
@@ -4447,6 +4451,7 @@ export class Lowerer {
       checkedTable("threadSlotNames", () => this.threadSlotNames.size),
       checkedTable("threadSlotFamilies", () => this.threadSlotFamilies.size),
       checkedTable("threadSlotKeys", () => this.threadSlotKeys.size),
+      checkedTable("objectMethodNames", () => this.objectMethodNames.size),
       checkedTable("forkTargetIdByPath", () => this.forkTargetIdByPath.size),
       checkedTable("nsBlocks", () => this.nsBlocks.size),
       checkedTable("initNameOf", () => this.initNameOf.size),
@@ -9816,6 +9821,7 @@ export class Lowerer {
     // one is exact only if the declaration is held at a single signature.
     checkGenericIdentityPins(this);
     boxBuiltinValuesChecked(this, functions);
+    finalizeFunctionNames(this, functions);
     if (this.diags.length === 0) fuseArrayPipelines(this, functions);
     finalizeClassMethodValues(this, functions);
     finalizePrivateBrands(this, functions);
