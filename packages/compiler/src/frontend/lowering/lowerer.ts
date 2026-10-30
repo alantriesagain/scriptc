@@ -2717,6 +2717,9 @@ export class Lowerer {
   requestInitPropMutatedSyms: Set<ts.Symbol> | null = null;
   emitterEventTable: Map<string, EventSig> | null = null;
   emitterComputedPatterns: ComputedEventPattern[] = [];
+  /** Some site registers a listener under an unrestricted computed name
+   * (lower-event-emitter.ts emitterEvents). */
+  emitterAnyNameListener = false;
   /** The EventTarget engine's handleEvent reader was lifted
    * (lower-event-target.ts noteEventListeners). */
   handleEventReader = false;
@@ -3572,6 +3575,9 @@ export class Lowerer {
   readonly neverValued = new Set<IrExpr>();
   readonly chainNarrowedType = new Map<ts.Node, ts.Type>();
   readonly chainHandled = new Set<ts.Node>();
+  /** One arm's narrowed value for a spread source while a distributed
+   * union spread lowers that arm (lowerDistributedUnionSpread). */
+  readonly spreadArmOverrides = new Map<ts.Node, IrExpr>();
   /** for-of-over-matchAll bindings whose `.index` reads the companion-index
    * array: binding SYMBOL → the hidden number[] of match start indices plus
    * the hidden cursor holding THIS iteration's position (registered while
@@ -4651,6 +4657,7 @@ export class Lowerer {
     "neverValued",
     "chainNarrowedType",
     "chainHandled",
+    "spreadArmOverrides",
     "splitIdentifierUses",
     "typeMemo",
     "fnStack",
@@ -4757,6 +4764,7 @@ export class Lowerer {
       fixed("errorPropertyDispatchRevision", () => this.errorPropertyDispatchRevision),
       fixed("childAdditions", () => this.childAdditions),
       fixed("emitterEventTable", () => this.emitterEventTable),
+      fixed("emitterAnyNameListener", () => this.emitterAnyNameListener),
       fixed("globalThisWrittenNames", () => this.globalThisWrittenNames),
       fixed("importRetryModules", () => this.importRetryModules),
       fixed("localSubclassIndex", () => this.localSubclassIndex),
