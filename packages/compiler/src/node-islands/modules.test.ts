@@ -2,8 +2,11 @@ import { mkdirSync, mkdtempSync, realpathSync, symlinkSync, writeFileSync } from
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { describe, expect, test } from "vitest";
+import { readProjectConfig } from "../project-config.js";
 import {
   NodeIslandModuleCollector,
+  declaredIslandFiles,
+  namedDataPaths,
   nodeIslandManifest,
   readNodeIslandModules,
   requireModuleSpecifiers,
@@ -18,6 +21,26 @@ function project(files: Record<string, string>): string {
   }
   return root;
 }
+
+describe("data paths a module names", () => {
+  test("string literals, and consecutive literal arguments joined", () => {
+    const names = namedDataPaths(`
+      const a = readFileSync(join(here, "fallback", "payload.txt"));
+      const b = "assets/config.json";
+      const c = resolve(__dirname, "x", base, "y");
+      // "comment.txt"
+      const d = \`\${dir}/template.txt\`;
+    `);
+    expect([...names].sort()).toEqual([
+      "assets/config.json",
+      "fallback",
+      "fallback/payload.txt",
+      "payload.txt",
+      "x",
+      "y",
+    ]);
+  });
+});
 
 describe("module specifiers in JavaScript", () => {
   test("string-literal loads in every form", () => {
@@ -273,7 +296,8 @@ describe("the collected module tree", () => {
     const outside = project({ "secrets/config.json": "{}", "token.txt": "secret\n" });
     const root = project({
       "src/main.ts": "",
-      "src/loader.ts": 'const names = ["config.json", "token.txt", "payload.txt"];',
+      "src/loader.ts":
+        'const names = ["linked/config.json", "data/token.txt", "data/payload.txt", "data/loop/data/payload.txt"];',
       "src/data/payload.txt": "shipped\n",
     });
     symlinkSync(join(outside, "secrets"), join(root, "src/linked"), "dir");
@@ -286,6 +310,61 @@ describe("the collected module tree", () => {
     expect(paths).toContain("data/payload.txt");
     expect(paths.filter((path) => path.endsWith("config.json"))).toEqual([]);
     expect(paths.filter((path) => path.endsWith("token.txt"))).toEqual([]);
+    expect(paths.filter((path) => path.includes("loop"))).toEqual([]);
+  });
+
+  test("only the exact path a module names ships, never a file of the same name elsewhere", () => {
+    const outside = project({ "outside.txt": "private\n" });
+    const root = project({
+      "src/main.ts": "",
+      "src/loader.cjs": [
+        'const fs = require("node:fs");',
+        'const config = fs.readFileSync(__dirname + "/" + "assets/config.json");',
+        'const up = "../notes.txt";',
+        `const away = "${join(outside, "outside.txt")}";`,
+        'const deps = "node_modules/dep/config.json";',
+      ].join("\n"),
+      "src/assets/config.json": "{}",
+      "src/private/config.json": '{ "token": "secret" }',
+      "src/config.json": '{ "token": "secret" }',
+      "src/node_modules/dep/config.json": "{}",
+      "notes.txt": "beside the source directory\n",
+    });
+    const collector = new NodeIslandModuleCollector();
+    expect(collector.add(join(root, "src/main.ts"), "./loader.cjs")).toBeNull();
+    const paths = collector.tree()!.files.map((file) => file.path);
+    expect(paths.filter((path) => !path.endsWith(".cjs"))).toEqual(["assets/config.json"]);
+  });
+
+  test("files scriptc.nodeIslands.files declares ship with the island modules", () => {
+    const root = project({
+      "package.json": JSON.stringify({
+        scriptc: { nodeIslands: { files: ["data/*.json", "docs/readme.txt", "absent.bin"] } },
+      }),
+      "main.ts": "",
+      "data/a.json": "{}",
+      "data/b.json": "{}",
+      "data/c.txt": "",
+      "data/nested/d.json": "{}",
+      "docs/readme.txt": "",
+      "node_modules/x/data/e.json": "{}",
+    });
+    const declared = declaredIslandFiles(readProjectConfig(join(root, "main.ts")));
+    expect(declared.files).toEqual([
+      join(root, "data/a.json"),
+      join(root, "data/b.json"),
+      join(root, "docs/readme.txt"),
+    ]);
+    expect(declared.missing).toEqual(["absent.bin"]);
+    const collector = new NodeIslandModuleCollector();
+    expect(collector.add(join(root, "main.ts"), "./data/a.json")).toBeNull();
+    for (const file of declared.files) collector.addDeclaredFile(file);
+    expect(collector.tree()!.files.map((file) => file.path)).toEqual([
+      "data/a.json",
+      "data/b.json",
+      "docs/readme.txt",
+      "package.json",
+    ]);
   });
 
   test("the manifest names relative paths only, and the data is checked against it", () => {

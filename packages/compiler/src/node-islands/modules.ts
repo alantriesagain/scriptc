@@ -40,7 +40,9 @@ import {
   trackedRealpath,
 } from "../frontend/input-tracker.js";
 import type { IrNodeIslandModules } from "../ir/ir.js";
+import type { ProjectConfig } from "../project-config.js";
 import { packageDirOf } from "./origin.js";
+import { globMatch } from "./policy.js";
 
 export type NodeIslandModuleTree = IrNodeIslandModules;
 type NodeIslandModuleFile = IrNodeIslandModules["files"][number];
@@ -341,42 +343,39 @@ export class NodeIslandModuleCollector {
   /** Data files beside a program module that runs in an island: the module
    * resolves them from its own directory (photon redirects a package's
    * read to the wasm next to the patching module), and the island runs from
-   * the shipped tree, so a file the module names by a string literal ships
-   * with it. Files the source does not name stay out, and module sources
-   * ship through the traced walk, never as data. The walk stays inside the
-   * module's directory: a symbolic link (to a file or a directory) that
-   * leads outside it is not followed, so nothing from elsewhere on the
-   * machine is embedded. */
+   * the shipped tree, so a file the module names by its path relative to
+   * the module's directory ships with it (namedDataPaths). Only the exact
+   * path ships: a file elsewhere in the tree with the same name stays out,
+   * and so does every file the source does not name; such files ship when
+   * `scriptc.nodeIslands.files` declares them (addDeclaredFile). Module
+   * sources ship through the traced walk, never as data. A named path
+   * stays inside the module's directory: one that leads outside it,
+   * through `..` or a symbolic link, or into node_modules or .git, is not
+   * shipped, so nothing from elsewhere on the machine is embedded. */
   private addNamedData(moduleFile: string, text: string): void {
-    const names = new Set<string>();
-    for (const token of moduleTokens(text))
-      if (token.kind === "string" && !token.value.includes("${")) names.add(basename(token.value));
-    if (names.size === 0) return;
     const root = dirname(moduleFile);
     const inside = (path: string): boolean => {
       const rel = relative(root, path);
-      return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+      return rel !== "" && !rel.startsWith("..") && !isAbsolute(rel);
     };
-    const visited = new Set<string>();
-    const walk = (dir: string): void => {
-      const real = trackedRealpath(dir);
-      if (real === null || !inside(real) || visited.has(real)) return;
-      visited.add(real);
-      const entries = trackedAccessibleEntries(dir);
-      if (entries === null) return;
-      for (const file of entries.files) {
-        const path = join(dir, file);
-        if (!names.has(file) || TRACED.test(file) || path === moduleFile) continue;
-        const target = trackedRealpath(path);
-        if (target === null || !inside(target)) continue;
-        this.files.add(path);
-      }
-      for (const sub of entries.directories) {
-        if (sub === "node_modules" || sub === ".git") continue;
-        walk(join(dir, sub));
-      }
-    };
-    walk(root);
+    for (const name of namedDataPaths(text)) {
+      if (isAbsolute(name) || name.includes("\0")) continue;
+      const path = resolve(root, name);
+      if (!inside(path) || path === moduleFile || TRACED.test(path)) continue;
+      const parts = relative(root, path).split(sep);
+      if (parts.includes("node_modules") || parts.includes(".git")) continue;
+      if (!trackedFileExists(path)) continue;
+      const target = trackedRealpath(path);
+      if (target === null || !inside(target)) continue;
+      // A link inside the directory stays a link in the tree (placed).
+      this.files.add(this.placed(path));
+    }
+  }
+
+  /** A file `scriptc.nodeIslands.files` declares for the island modules of
+   * the program (declaredIslandFiles): shipped at its path in the tree. */
+  addDeclaredFile(file: string): void {
+    this.files.add(this.placed(file));
   }
 
   /** A package: its whole directory, then its dependencies. */
@@ -630,6 +629,78 @@ export interface ModuleSpecifierScan {
   specifiers: string[];
   /** Loads whose module the source does not name with a string literal. */
   computed: { at: number; form: string }[];
+}
+
+/** The files `scriptc.nodeIslands.files` declares: each path, relative to
+ * the package.json, and the files under the package.json's directory each
+ * glob matches (node_modules and .git directories excluded). `missing`
+ * lists the paths without a file. */
+export function declaredIslandFiles(config: ProjectConfig): { files: string[]; missing: string[] } {
+  const patterns = config.nodeIslands.files;
+  if (patterns.length === 0) return { files: [], missing: [] };
+  const base = config.manifest === null ? process.cwd() : dirname(config.manifest);
+  const files = new Set<string>();
+  const missing: string[] = [];
+  const globs: string[] = [];
+  for (const pattern of patterns) {
+    const path = resolve(base, pattern);
+    if (!/[*?]/.test(pattern)) {
+      if (trackedFileExists(path)) files.add(path);
+      else missing.push(pattern);
+    } else globs.push(portable(path));
+  }
+  if (globs.length > 0) {
+    const walk = (dir: string): void => {
+      const entries = trackedAccessibleEntries(dir);
+      if (entries === null) return;
+      for (const file of entries.files) {
+        const path = join(dir, file);
+        if (globs.some((glob) => globMatch(glob, portable(path)))) files.add(path);
+      }
+      for (const sub of entries.directories)
+        if (sub !== "node_modules" && sub !== ".git") walk(join(dir, sub));
+    };
+    walk(base);
+  }
+  return { files: [...files].sort(), missing };
+}
+
+/** The relative paths a module's source names by string literals: each
+ * literal (`"data/table.json"`), and the literals passed as consecutive
+ * arguments of one call joined with `/`, as `path.join(here, "fallback",
+ * "payload.txt")` names `fallback/payload.txt`. Comments and template
+ * literals with substitutions name nothing. */
+export function namedDataPaths(text: string): Set<string> {
+  const tokens = moduleTokens(text);
+  const names = new Set<string>();
+  let run: string[] = [];
+  const end = (): void => {
+    if (run.length > 1) names.add(run.join("/"));
+    run = [];
+  };
+  for (let k = 0; k < tokens.length; k++) {
+    const t = tokens[k]!;
+    if (t.kind === "string") {
+      if (t.value.includes("${")) {
+        end();
+        continue;
+      }
+      names.add(t.value);
+      const before = tokens[k - 1];
+      const after = tokens[k + 1];
+      const argument =
+        before?.kind === "punct" &&
+        (before.value === "(" || before.value === ",") &&
+        after?.kind === "punct" &&
+        (after.value === ")" || after.value === ",");
+      if (!argument) end();
+      else run.push(t.value);
+      continue;
+    }
+    if (t.kind !== "punct" || t.value !== ",") end();
+  }
+  end();
+  return names;
 }
 
 /** The string-literal arguments of `requireModule(...)` calls in source

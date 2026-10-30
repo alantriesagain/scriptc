@@ -17,6 +17,7 @@ test("a package.json without a scriptc key has the default configuration", () =>
   expect(c.nodeIslands).toEqual({
     auto: true,
     modules: [],
+    files: [],
     node: null,
     nodeVersion: null,
     packaging: "embedded",
@@ -103,6 +104,7 @@ test("nodeIslands settings", () => {
     nodeIslands: {
       auto: false,
       modules: ["src/plugins/*.ts"],
+      files: ["data/*.json"],
       node: "/usr/local/bin/node",
       nodeVersion: ">=24.13.1",
       packaging: "beside",
@@ -115,6 +117,7 @@ test("nodeIslands settings", () => {
   expect(c.nodeIslands).toEqual({
     auto: false,
     modules: ["src/plugins/*.ts"],
+    files: ["data/*.json"],
     node: "/usr/local/bin/node",
     nodeVersion: ">=24.13.1",
     packaging: "beside",
@@ -131,6 +134,14 @@ test("publicEnv must be an array of variable names", () => {
     `package.json 'scriptc.nodeIslands.publicEnv' must be an array of environment variable names, not "NODE_ENV"`,
   ]);
   expect(c.nodeIslands.publicEnv).toEqual([]);
+});
+
+test("files must be an array of paths or globs", () => {
+  const c = config({ nodeIslands: { files: "data/config.json" } });
+  expect(c.diagnostics.map((d) => d.message)).toEqual([
+    `package.json 'scriptc.nodeIslands.files' must be an array of file paths or globs, not "data/config.json"`,
+  ]);
+  expect(c.nodeIslands.files).toEqual([]);
 });
 
 test("unknown keys and values are SC8004, located at the key", () => {

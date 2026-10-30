@@ -23,7 +23,7 @@ import {
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { promisify } from "node:util";
-import { beforeAll, describe, expect, test } from "vitest";
+import { beforeAll, describe, expect, test, vi } from "vitest";
 import { compile, deserializeModule } from "@scriptc/compiler";
 import { definedFunctionNames, nodeIslandSymbols } from "../../scripts/zero-cost-compare.mjs";
 import { libnodePack } from "./libnode.js";
@@ -555,7 +555,97 @@ export function patchAndBump(): number {
       }
     }, 300_000);
   });
+
+  // The build-time probe evaluates modules to decide their deferral. A
+  // program module that runs in an island loads eagerly, so the build never
+  // evaluates the program's own source; the executable evaluates it when
+  // the entry requires it.
+  test("the build does not evaluate a program module that runs in an island", async () => {
+    const dir = sloppyModuleProject("probe");
+    const cache = mkdtempSync(join(tmpdir(), "scriptc-sloppy-probe-cache-"));
+    const islandCache = mkdtempSync(join(tmpdir(), "scriptc-island-cache-"));
+    const previous = process.env["SCRIPTC_CACHE_DIR"];
+    process.env["SCRIPTC_CACHE_DIR"] = cache;
+    try {
+      const result = await compile(join(dir, "main.js"), {
+        outPath: join(dir, "main"),
+        outDir: dir,
+        sanitize,
+        libnode: pack!,
+      });
+      if (!result.ok)
+        throw new Error(result.diagnostics.map((d) => `${d.code}: ${d.message}`).join("\n"));
+      expect(result.islands?.modules.map((file) => basename(file))).toEqual(["sloppy.js"]);
+      expect(existsSync(join(dir, "evaluated.txt"))).toBe(false);
+      const out = await run(join(dir, "main"), [], { ...process.env, XDG_CACHE_HOME: islandCache });
+      expect(out).toEqual({ stdout: "2\n", stderr: "", code: 0 });
+      expect(existsSync(join(dir, "evaluated.txt"))).toBe(false);
+    } finally {
+      if (previous === undefined) delete process.env["SCRIPTC_CACHE_DIR"];
+      else process.env["SCRIPTC_CACHE_DIR"] = previous;
+      rmSync(cache, { recursive: true, force: true });
+      rmSync(islandCache, { recursive: true, force: true });
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 300_000);
 });
+
+/** A CommonJS program whose entry requires a sloppy-mode module (a `with`
+ * statement islands it under the default `--node-islands=auto`). The
+ * module writes evaluated.txt beside itself when it evaluates. */
+function sloppyModuleProject(name: string): string {
+  const dir = mkdtempSync(join(tmpdir(), `scriptc-sloppy-${name}-`));
+  writeFileSync(join(dir, "package.json"), "{}\n");
+  writeFileSync(
+    join(dir, "main.js"),
+    'const { value } = require("./sloppy.js");\nconsole.log(value());\n',
+  );
+  writeFileSync(
+    join(dir, "sloppy.js"),
+    [
+      'require("fs").writeFileSync(require("path").join(__dirname, "evaluated.txt"), "evaluated\\n");',
+      "function value() {",
+      "  with ({ n: 1 }) {",
+      "    return n + 1;",
+      "  }",
+      "}",
+      "module.exports = { value };",
+      "",
+    ].join("\n"),
+  );
+  return dir;
+}
+
+// A program module that runs in an island never reaches the deferral
+// decision, whose probe evaluates the modules it decides: lowering loads it
+// eagerly. SCRIPTC_NODE_ISLANDS_TRACE=defer prints every decision; IR
+// output needs no libnode pack.
+test("a program module that runs in an island is never a deferral candidate", async () => {
+  const dir = sloppyModuleProject("defer");
+  const previous = process.env["SCRIPTC_NODE_ISLANDS_TRACE"];
+  process.env["SCRIPTC_NODE_ISLANDS_TRACE"] = "defer";
+  const written: string[] = [];
+  const spy = vi.spyOn(process.stderr, "write").mockImplementation((chunk) => {
+    written.push(String(chunk));
+    return true;
+  });
+  try {
+    const outPath = join(dir, "main.ir.json");
+    const result = await compile(join(dir, "main.js"), { outPath, outDir: dir, outputKind: "ir" });
+    if (!result.ok)
+      throw new Error(result.diagnostics.map((d) => `${d.code}: ${d.message}`).join("\n"));
+    expect(written.filter((line) => line.includes("sloppy.js"))).toEqual([]);
+    const ir = JSON.stringify(deserializeModule(readFileSync(outPath, "utf8")));
+    expect(ir).toContain("nodeIsland.require");
+    expect(ir).not.toContain("nodeIsland.defer");
+    expect(existsSync(join(dir, "evaluated.txt"))).toBe(false);
+  } finally {
+    spy.mockRestore();
+    if (previous === undefined) delete process.env["SCRIPTC_NODE_ISLANDS_TRACE"];
+    else process.env["SCRIPTC_NODE_ISLANDS_TRACE"] = previous;
+    rmSync(dir, { recursive: true, force: true });
+  }
+}, 300_000);
 
 // Lowering checks every argument and result type for JSON data; IR output
 // needs no libnode pack.
