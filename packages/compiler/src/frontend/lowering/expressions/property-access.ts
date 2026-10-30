@@ -211,6 +211,7 @@ import { isZlibStreamMember, lowerZlibStreamBytesWritten } from "../builtins/com
 import { isWebCryptoReceiver } from "../builtins/crypto.js";
 import { isFsStreamMember, lowerFsStreamProperty } from "../builtins/fs-streams.js";
 import { keyedFieldRead } from "./keyed-field-targets.js";
+import { heldEnvValueType } from "../builtins/environment.js";
 import { promisePrototypeValue } from "../thenables.js";
 import { lowerChildPropertyRead } from "../handle-properties.js";
 
@@ -714,7 +715,9 @@ export function lowerPropertyAccessExpr(
       };
     }
   }
-  if ((expr.name.text === "index" || expr.name.text === "input") && !expr.questionDotToken) {
+  // `re.exec(s)?.index` takes the same read: the chain lowering binds the
+  // guarded receiver (non-nullish inside the guard) before re-dispatching.
+  if (expr.name.text === "index" || expr.name.text === "input") {
     const represented = tryLowerExpression(lowerer, expr.expression);
     if (
       represented &&
@@ -4812,6 +4815,21 @@ export function fieldGetExpr(
   // construction), typed as the index value armed with undefined
   // (mirroring lowerRecordKeyRead).
   if (target.container === "recordOvf") {
+    // A dot read through a value HELD from process.env (`const env =
+    // process.env; env.X`): the hold aliases the live table, so the read is
+    // the same getenv the direct spelling lowers to.
+    if (ts.isPropertyAccessExpression(blame)) {
+      const live = heldEnvValueType(lowerer, blame.expression);
+      if (live !== null) {
+        return {
+          kind: "libCall",
+          fn: "process.envGet",
+          args: [{ kind: "strLit", value: target.field, type: STRING, loc }],
+          type: live,
+          loc,
+        };
+      }
+    }
     let obj = target.obj;
     if (obj.type.kind === "union" && ts.isPropertyAccessExpression(blame)) {
       const present = lowerer.stripUndefinedArm(obj.type);
