@@ -65,6 +65,9 @@ export interface EarlyExecutableNativeFeatures {
   wasm?: boolean;
   warningReplace?: boolean;
   recordViewPartial?: boolean;
+  /** A descriptor built by an expression reaches defineProperty, defineProperties
+   * or Object.create: SCR_DESCRIPTOR_SHAPES. */
+  descriptorShapes?: boolean;
   stdioExtended?: boolean;
   fsFlags?: boolean;
   strdecDyn?: boolean;

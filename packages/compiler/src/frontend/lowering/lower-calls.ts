@@ -7989,6 +7989,21 @@ function isDynEntryPairsType(lowerer: Lowerer, t: IrType): boolean {
   return field("0")?.kind === "string" && field("1")?.kind === "dyn";
 }
 
+/** True when the expression is statically a PLAIN OBJECT at runtime: a dyn
+ *  object literal, or a record (a literal, a clone, or any expression of a
+ *  record type, which dynFrom boxes field by field). Both build an ordinary
+ *  object whose fields are own data properties, which the default runtime
+ *  descriptor reader answers exactly. Every other expression (a variable of
+ *  any other type, a call, an array, a function) may be an object of any
+ *  kind with inherited fields, so it asks for the SCR_DESCRIPTOR_SHAPES
+ *  build that implements ToPropertyDescriptor over every object kind. */
+export function isPlainObjectLiteral(expr: IrExpr): boolean {
+  if (expr.kind === "dynObjLit") return true;
+  if (expr.kind !== "dynFrom") return false;
+  const value = expr.value;
+  return value.kind === "dynObjLit" || value.type.kind === "record";
+}
+
 function lowerObjectStaticCall(
   lowerer: Lowerer,
   call: ts.CallExpression,
@@ -8351,7 +8366,11 @@ function lowerObjectStaticCall(
       if (descriptors.type.kind === "dyn")
         return {
           kind: "libCall",
-          fn: "dyn.objCreateWithProperties",
+          // A descriptor map built by an expression may be an array, a
+          // function or an object with inherited fields (SCR_DESCRIPTOR_SHAPES).
+          fn: isPlainObjectLiteral(descriptors)
+            ? "dyn.objCreateWithProperties"
+            : "dyn.objCreateWithPropertiesShapes",
           args: [proto, descriptors],
           type: DYN,
           loc,
@@ -8754,7 +8773,10 @@ function lowerObjectStaticCall(
     if (descriptor.type.kind !== "dyn") return null;
     return {
       kind: "libCall",
-      fn: "dyn.defineProperty",
+      // A descriptor built by an expression may be an array, a function or an
+      // object with inherited fields, which the runtime answers only in its
+      // SCR_DESCRIPTOR_SHAPES build; a plain object literal keeps the default.
+      fn: isPlainObjectLiteral(descriptor) ? "dyn.defineProperty" : "dyn.definePropertyShapes",
       args: [target, key, descriptor],
       type: DYN,
       loc: locOf(call),
@@ -8819,7 +8841,9 @@ function lowerObjectStaticCall(
       if (descs.type.kind === "dyn") {
         return {
           kind: "libCall",
-          fn: "dyn.defineProps",
+          // As for Object.defineProperty above: a descriptor map built by an
+          // expression asks for the SCR_DESCRIPTOR_SHAPES build.
+          fn: isPlainObjectLiteral(descs) ? "dyn.defineProps" : "dyn.definePropsShapes",
           args: [target, descs],
           type: DYN,
           loc: locOf(call),

@@ -178,4 +178,22 @@ describe("runtime feature snapshots", () => {
     mod.unions[0]!.arms[0] = STRING;
     expect(moduleRuntimeFeatures(mod).dynAsync).toBe(false);
   });
+
+  test("asks for the object-shaped descriptor build only for an expression descriptor", () => {
+    const literal = module();
+    literal.functions[0]!.body.push(call("dyn.defineProperty"));
+    expect(moduleRuntimeFeatures(literal).descriptorShapes).toBe(false);
+
+    for (const fn of [
+      "dyn.definePropertyShapes",
+      "dyn.definePropsShapes",
+      "dyn.objCreateWithPropertiesShapes",
+    ] as const) {
+      const mod = module();
+      mod.functions[0]!.body.push(call(fn));
+      expect(moduleRuntimeFeatures(mod).descriptorShapes).toBe(true);
+      // The shape variants run the dyn-invoke unit's entry points.
+      expect(moduleRuntimeFeatures(mod).dynInvoke).toBe(true);
+    }
+  });
 });

@@ -7427,9 +7427,45 @@ static void scr_dyn_descriptor_fields_drop(ScrDyn **fields) {
  * configurable, value, writable, get, set; +1 each, NULL when absent),
  * read in that order through any getters. False with a TypeError pending
  * for a primitive descriptor, a getter's exception, or an invalid
- * combination; every field is then released. */
+ * combination; every field is then released.
+ *
+ * The descriptor is any object, not only a plain one: the spec's
+ * Type(Desc) is Object, so an array, a function, a Map or a Date answers
+ * the fields it carries, and each field is present through [[HasProperty]]
+ * — an inherited `enumerable` or `value` counts — and then read through
+ * [[Get]], which stays the inherited one.
+ *
+ * SCR_DESCRIPTOR_SHAPES selects that reading. Only programs that pass a
+ * descriptor built by an expression to defineProperty, defineProperties or
+ * Object.create ask for it (dyn.definePropertyShapes and its siblings), so
+ * every other program keeps the plain-object reader — and its object — byte
+ * for byte. */
 static bool scr_dyn_descriptor_fields_read(const ScrDyn *descriptor, ScrDyn **fields) {
   for (size_t i = 0; i < 6; i++) fields[i] = NULL;
+#ifdef SCR_DESCRIPTOR_SHAPES
+  if (!scr_iterator_object(descriptor)) {
+    static const char msg[] = "Property description must be an object";
+    scr_throw_error_msg(SCR_ERR_TYPE, msg, sizeof msg - 1);
+    return false;
+  }
+  static const char *const names[] = {"enumerable", "configurable", "value", "writable", "get", "set"};
+  static const size_t lengths[] = {10, 12, 5, 8, 3, 3};
+  for (size_t i = 0; i < 6; i++) {
+    ScrStr *name = scr_str_new(names[i], lengths[i]);
+    bool present = scr_dyn_in(descriptor, name);
+    scr_str_release(name);
+    if (scr_exc_pending()) {
+      scr_dyn_descriptor_fields_drop(fields);
+      return false;
+    }
+    if (!present) continue;
+    fields[i] = scr_dyn_obj_read(descriptor, names[i], lengths[i]);
+    if (!fields[i]) {
+      scr_dyn_descriptor_fields_drop(fields);
+      return false;
+    }
+  }
+#else
   if (descriptor->kind != SCR_DYN_OBJ) {
     static const char msg[] = "Property description must be an object";
     scr_throw_error_msg(SCR_ERR_TYPE, msg, sizeof msg - 1);
@@ -7445,6 +7481,7 @@ static bool scr_dyn_descriptor_fields_read(const ScrDyn *descriptor, ScrDyn **fi
       return false;
     }
   }
+#endif
   ScrDyn *get = fields[4], *set = fields[5];
   if ((get || set) && (fields[2] || fields[3])) {
     scr_dyn_descriptor_fields_drop(fields);

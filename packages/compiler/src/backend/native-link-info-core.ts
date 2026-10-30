@@ -35,6 +35,12 @@ export interface NativeLinkFeatures {
    * record view): links the SCR_RECORD_VIEW_PARTIAL variant of scr_json.c.
    * Absent for every program without one, so their objects stay identical. */
   recordViewPartial?: boolean;
+  /** A property descriptor built by an expression (not a plain object
+   * literal) reaches defineProperty, defineProperties or Object.create: links
+   * the SCR_DESCRIPTOR_SHAPES variant of scr_json.c, whose ToPropertyDescriptor
+   * accepts any object kind and reads inherited fields. Absent for every other
+   * program, so their objects stay identical. */
+  descriptorShapes?: boolean;
   /** The program uses process.stdin.setEncoding, string 'data' listeners
    * or stdio 'resize' events: links the SCR_STDIO_EXTENDED events unit. */
   stdioExtended?: boolean;

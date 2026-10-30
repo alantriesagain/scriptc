@@ -402,6 +402,14 @@ function buildLibFnSignatures() {
      * the may-throw seed set. */
     "dyn.defineProps": { argTypes: [DYN, DYN], result: DYN },
     "dyn.defineProperty": { argTypes: [DYN, DYN, DYN], result: DYN },
+    /** The same entry points as dyn.defineProps / dyn.defineProperty /
+     * dyn.objCreateWithProperties, emitted when the descriptor (or the
+     * property-descriptor map) is built by an expression instead of a plain
+     * object literal: only these request the SCR_DESCRIPTOR_SHAPES build of
+     * scr_json.c. */
+    "dyn.definePropsShapes": { argTypes: [DYN, DYN], result: DYN },
+    "dyn.definePropertyShapes": { argTypes: [DYN, DYN, DYN], result: DYN },
+    "dyn.objCreateWithPropertiesShapes": { argTypes: [DYN, DYN], result: DYN },
     "dyn.getOwnPropertyDescriptor": { argTypes: [DYN, DYN], result: DYN },
     "dyn.arrayProtoCall": { argTypes: [DYN, STRING, DYN], result: DYN },
     /** Promise.all / Promise.allSettled / Promise.any over a spread
