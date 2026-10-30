@@ -1156,6 +1156,8 @@ void scr_dyn_symbol_key_set(ScrDyn *value, ScrDyn *key, ScrDyn *stored);
 void scr_dyn_symbol_field_set(ScrDyn *value, ScrDyn *key, ScrDyn *stored);
 void scr_dyn_symbol_key_placeholder(ScrDyn *value, ScrDyn *key);
 bool scr_dyn_has_key_computed(const ScrDyn *value, const ScrDyn *key);
+/* Reflect.has's target check: Node's TypeError pending for a primitive. */
+void scr_dyn_reflect_has_target(const ScrDyn *target);
 bool scr_dyn_has_own_computed(const ScrDyn *value, const ScrDyn *key);
 bool scr_dyn_property_is_enumerable_computed(const ScrDyn *value, const ScrDyn *key);
 void scr_dyn_key_delete_computed(ScrDyn *value, const ScrDyn *key, bool strict);
@@ -1759,6 +1761,10 @@ void scr_errdyn_put(ScrError *e, ScrDyn *d);  /* retains both sides */
 /* Sets an own property on an error: its checked-dynamic node, which casts
  * and util.inspect read. Moves value. */
 void scr_error_set_prop(ScrError *e, const char *key, size_t key_len, ScrDyn *value);
+/* scr_throw_node_coded with an own `url` property (error.nodeThrow's
+ * fourth argument). Borrows the strings; always throws. */
+SCR_COLD void scr_throw_node_coded_url(double kind, const ScrStr *code, const ScrStr *msg,
+                                       const ScrStr *url);
 ScrDyn *scr_errdyn_view_of(const ScrError *e); /* borrowed or NULL */
 /* ToBoolean over the dyn kind (JS-exact); borrowed, never throws. */
 bool scr_dyn_truthy(const ScrDyn *d);
@@ -2304,6 +2310,7 @@ ScrDyn *scr_gen_receiver(void);
  * firing site opens/closes it around a 'data' pass; scr_dyn_new_chunk
  * answers a Buffer-flavored bytes box, or a string inside the window. */
 void scr_dyn_chunk_enc(bool utf8);
+void scr_dyn_chunk_text(ScrStr *text); /* a decoded string instead; borrowed, NULL closes */
 ScrDyn *scr_dyn_new_chunk(const ScrBytes *b);
 
 /* The JSON text of a dyn value: the JSON.stringify text (+1),
