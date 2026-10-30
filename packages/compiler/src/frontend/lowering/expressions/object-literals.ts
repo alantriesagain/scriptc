@@ -48,6 +48,7 @@ import { jsHoldsDynObject, runtimeOptionalStorageOperand } from "../lower-exprs.
 import { builtinGlobalValue } from "./property-access.js";
 import { holdsEvolvingArray } from "../lower-stmts.js";
 import { builtinNamespaceValue } from "../builtin-namespaces.js";
+import { tsUntypedGlobalValue } from "../global-values.js";
 
 /** `{ a: 1, b: "x" }` → recordLit. The record type comes from the
  * contextual type when tsc has one (annotated declarations, arguments,
@@ -447,8 +448,11 @@ export function lowerDynObjectLiteral(
       // A PURE member read a JS file cannot lower (a namespace object
       // in an export aggregate): the slot takes a boxed fence closure —
       // the diagnostics defer to the runtime-fence ledger, the object
-      // builds, and only USING the member stops the run.
-      const pureMember = ts.isIdentifier(valueExpr);
+      // builds, and only USING the member stops the run. A TypeScript
+      // source keeps the compile-time refusal: the closure would answer
+      // typeof "function" and undefined members where Node reads the
+      // value.
+      const pureMember = ts.isIdentifier(valueExpr) && isJsSourceFile(ts.getSourceFileOfNode(prop));
       if (!(err instanceof PoisonError) || !pureMember) throw err;
       const fence = lowerer.deferToRuntimeFence(propDiagsBefore, prop, {
         kind: "closure",
@@ -2616,7 +2620,7 @@ export function lowerObjectLiteral(
       ) {
         throw err;
       }
-      lowerer.runtimeFences.push(...lowerer.diags.splice(propDiagsBefore));
+      for (const d of lowerer.diags.splice(propDiagsBefore)) lowerer.runtimeFences.push(d);
       droppedNames.add(name);
       continue;
     }
@@ -3679,7 +3683,8 @@ function shorthandBuiltinValue(
   const name = ts.symbolName(symbol);
   return (
     (js ? builtinNamespaceValue(lowerer, name, locOf(prop.name)) : null) ??
-    builtinGlobalValue(name, locOf(prop.name), js)
+    builtinGlobalValue(name, locOf(prop.name), js) ??
+    tsUntypedGlobalValue(lowerer, prop.name as ts.Identifier, name, locOf(prop.name))
   );
 }
 
