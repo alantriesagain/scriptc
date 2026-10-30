@@ -2021,6 +2021,40 @@ console.log("prototype" in Map, "groupBy" in Map, "captureStackTrace" in Error, 
   });
 });
 
+// `Date.prototype` reads as the prototype object; a WRITE into it cannot be
+// observed by a typed Date, so every writer keeps the SC1090 fence it had
+// before the prototype had a value — including the plural defineProperties,
+// which the dynamic path would otherwise apply to the prototype object while
+// `new Date(0).getTime()` kept answering the builtin method.
+describe("standard library prototype writes (JS lane)", () => {
+  test("defineProperties keeps the fence, like defineProperty", async () => {
+    const r = await compileAndRun(
+      "date-prototype-write",
+      `"use strict";
+function refuse(label, run) {
+  try {
+    run();
+    console.log(label, "wrote");
+  } catch (e) {
+    console.log(label, /\\[(SC\\d{4}) at/.exec(e.message)[1]);
+  }
+}
+refuse("defineProperties", () =>
+  Object.defineProperties(Date.prototype, { getTime: { value: () => 42 } }),
+);
+refuse("defineProperty", () => Object.defineProperty(Date.prototype, "getTime", { value: () => 42 }));
+refuse("assign", () => Object.assign(Date.prototype, { getTime: () => 42 }));
+console.log("getTime", new Date(0).getTime());
+`,
+      "cjs",
+    );
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toBe(
+      "defineProperties SC1090\ndefineProperty SC1090\nassign SC1090\ngetTime 0\n",
+    );
+  });
+});
+
 // WebCrypto's native slice is crypto.subtle's secret-key methods and its
 // ECDSA, Ed25519 and RSA algorithms. Algorithms Node recognizes outside
 // that slice reject with a coded SC2020
@@ -2336,6 +2370,47 @@ console.log(util.format(s, { a: 1 }), util.formatWithOptions({ maxArrayLength: 1
         "Error SC2020 util.formatWithOptions with the maxArrayLength option has no lowering\n" +
         "Error SC2020 util.formatWithOptions with this compact option has no lowering (compact must be false or a number)\n" +
         "{ a: 1 } [ 1, 2 ]\n",
+    );
+    expect(r.stderr).toBe("");
+  });
+});
+
+// With customInspect: false (console.dir's default) Node prints a codec's
+// internal slots, which have no lowering; past the depth limit it prints
+// the class placeholder.
+describe("TextDecoder and TextEncoder with customInspect: false", () => {
+  test("refuse within the depth limit and print [cls] past it", async () => {
+    const r = await compileAndRun(
+      "codec-custom-inspect-false",
+      `import * as util from "node:util";
+const decoder = new TextDecoder();
+const encoder = new TextEncoder();
+const attempts: Array<() => string> = [
+  () => util.inspect(decoder, { customInspect: false }),
+  () => util.inspect([encoder], { customInspect: false }),
+  () => {
+    console.dir(decoder);
+    return "printed";
+  },
+];
+for (const attempt of attempts) {
+  try {
+    console.log(attempt());
+  } catch (error) {
+    console.log((error as Error).message);
+  }
+}
+console.log(util.inspect({ a: { b: { c: decoder, d: encoder } } }, { customInspect: false }));
+console.log(util.inspect(decoder, { customInspect: true }));
+`,
+    );
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toBe(
+      "util.inspect of a TextDecoder with customInspect: false is not supported yet\n" +
+        "util.inspect of a TextEncoder with customInspect: false is not supported yet\n" +
+        "util.inspect of a TextDecoder with customInspect: false is not supported yet\n" +
+        "{ a: { b: { c: [TextDecoder], d: [TextEncoder] } } }\n" +
+        "TextDecoder { encoding: 'utf-8', fatal: false, ignoreBOM: false }\n",
     );
     expect(r.stderr).toBe("");
   });
