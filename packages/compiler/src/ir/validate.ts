@@ -3871,6 +3871,14 @@ function validateFunction(
             }
             return;
           }
+          // A declared-only arm that lacks a literal key has no such own
+          // property: it answers undefined, like a unit arm.
+          if (
+            literal !== null &&
+            !shape.indexValue &&
+            resultUnion?.arms.some((a) => a.kind === "undefinedT")
+          )
+            return;
           if (!shape.indexValue && !(literal === null && shape.fields.length > 0)) {
             err(`unionKeyGet: arm ${i} of ${e.unionId} has no answer for the key`, e.loc);
           }

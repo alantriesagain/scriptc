@@ -595,6 +595,19 @@ export function emitDynamicExpr(
           B.br(join);
           return;
         }
+        // A declared-only arm without the literal key: the object has no
+        // such own property, so the read answers undefined.
+        if (literal !== null && !shape.indexValue) {
+          const tag = resultDef?.arms.findIndex((a) => a.kind === "undefinedT") ?? -1;
+          if (tag < 0 || e.type.kind !== "union") {
+            throw new InternalCompilerError(
+              "llvm emitter bug: unionKeyGet missing key without an undefined result arm",
+            );
+          }
+          B.line(`store ptr ${host.unitInstanceRef(e.type.unionId, tag)}, ptr ${slot}`);
+          B.br(join);
+          return;
+        }
         // Index-signature arm (or declared-only shape under a runtime
         // key): the shared keyed-read chain — a literal key naming no
         // declared field touches only the overflow map.
