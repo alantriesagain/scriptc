@@ -331,6 +331,9 @@ export function lowerQuerystringStringifyCall(
       }
     }
   }
+  // The encoder can change the object while stringify reads it, so a typed
+  // object crosses as a live capsule rather than a copy.
+  if (encoder && obj.kind === "dynFrom") obj = { ...obj, liveRef: true };
   if (encoder)
     return {
       kind: "libCall",

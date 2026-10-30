@@ -592,6 +592,49 @@ static void qs_stringify_value(QsBuf *b, const ScrDyn *v) {
   }
 }
 
+/* obj[k] (+1), read as Node's `const v = obj[k]` reads it: an array's
+ * elements by index and its named properties by name, undefined for a key
+ * removed after ObjectKeys. A capsule answers from its native value as it
+ * is now, as the dynamic keyed read does. NULL with an exception pending
+ * (a throwing getter). */
+static ScrDyn *qs_read(const ScrDyn *obj, const ScrStr *k) {
+  if (obj->kind == SCR_DYN_TYPED_REF) {
+    ScrDyn *fast = scr_dyn_typed_ref_key_get(obj, k);
+    if (fast) return fast;
+    ScrDyn *view = scr_dyn_typed_ref_materialize(obj);
+    ScrDyn *v = view && !scr_exc_pending() ? qs_read(view, k) : NULL;
+    scr_dyn_release(view);
+    return v;
+  }
+  ScrDyn *v = scr_dyn_obj_read(obj, k->data, k->len);
+  if (!v) return scr_exc_pending() ? NULL : scr_dyn_retain(scr_dyn_undefined());
+  return v;
+}
+
+/* v[index] (+1) for an array or an array capsule; a hole reads undefined. */
+static ScrDyn *qs_element(const ScrDyn *v, size_t index) {
+  if (v->kind == SCR_DYN_ARR) return scr_dyn_arr_at(v, (double)index);
+  char text[32];
+  int length = snprintf(text, sizeof text, "%zu", index);
+  ScrStr *key = scr_str_new(text, (size_t)length);
+  ScrDyn *item = qs_read(v, key);
+  scr_str_release(key);
+  return item;
+}
+
+/* qs_read, with a capsule value answered by its materialized view. */
+static ScrDyn *qs_member(const ScrDyn *obj, const ScrStr *k) {
+  ScrDyn *v = qs_read(obj, k);
+  if (!v || v->kind != SCR_DYN_TYPED_REF) return v;
+  ScrDyn *view = scr_dyn_typed_ref_materialize(v);
+  scr_dyn_release(v);
+  if (view && scr_exc_pending()) {
+    scr_dyn_release(view);
+    return NULL;
+  }
+  return view;
+}
+
 ScrStr *scr_qs_stringify(const ScrDyn *obj, const ScrStr *sep,
                          const ScrStr *eq) {
   if (obj && obj->kind == SCR_DYN_TYPED_REF) {
@@ -617,21 +660,18 @@ ScrStr *scr_qs_stringify(const ScrDyn *obj, const ScrStr *sep,
     return NULL;
   }
   for (size_t i = 0; i < keys->v.arr.len; i++) {
-    const ScrDyn *kd = keys->v.arr.items[i];
-    const ScrStr *k = kd->v.str;
-    const ScrDyn *v = obj->kind == SCR_DYN_ARR ? obj->v.arr.items[strtoull(k->data, NULL, 10)]
-                                               : scr_dyn_obj_get(obj, k->data, k->len);
-    if (!v) continue; /* unreachable: keys came from the object */
-    ScrDyn *view = v->kind == SCR_DYN_TYPED_REF ? scr_dyn_typed_ref_materialize(v) : NULL;
-    if (view) v = view;
-    if (scr_exc_pending()) { scr_dyn_release(view); scr_dyn_release(keys); free(fields.data); return NULL; }
+    const ScrStr *k = keys->v.arr.items[i]->v.str;
+    ScrDyn *v = qs_member(obj, k);
+    if (!v) { scr_dyn_release(keys); free(fields.data); return NULL; }
     ScrStr *ks = scr_qs_escape((ScrStr *)k);
     if (v->kind == SCR_DYN_ARR) {
       for (size_t j = 0; j < v->v.arr.len; j++) {
         if (fields.len) qb_append(&fields, sep_b, sep_len);
         qb_append_str(&fields, ks);
         qb_append(&fields, eq_b, eq_len);
-        qs_stringify_value(&fields, v->v.arr.items[j]);
+        ScrDyn *item = scr_dyn_arr_at(v, (double)j); /* a hole reads undefined */
+        qs_stringify_value(&fields, item);
+        scr_dyn_release(item);
       }
     } else {
       if (fields.len) qb_append(&fields, sep_b, sep_len);
@@ -640,7 +680,7 @@ ScrStr *scr_qs_stringify(const ScrDyn *obj, const ScrStr *sep,
       qs_stringify_value(&fields, v);
     }
     scr_str_release(ks);
-    scr_dyn_release(view);
+    scr_dyn_release(v);
   }
   scr_dyn_release(keys);
   if (scr_exc_pending()) { /* a lone surrogate: URIError [ERR_INVALID_URI] */
@@ -716,18 +756,28 @@ static ScrDyn *qs_append_text(ScrDyn *fields, const char *bytes, size_t len) {
 ScrStr *scr_qs_stringify_custom(const ScrDyn *obj, const ScrStr *sep, const ScrStr *eq,
                                 const ScrDyn *encoder) {
   if (encoder->kind != SCR_DYN_FUNC) return scr_qs_stringify(obj, sep, eq);
-  if (obj && obj->kind == SCR_DYN_TYPED_REF) {
-    ScrDyn *view = scr_dyn_typed_ref_materialize(obj);
-    ScrStr *result = view && !scr_exc_pending() ? scr_qs_stringify_custom(view, sep, eq, encoder) : NULL;
-    scr_dyn_release(view);
-    return result;
-  }
   const char *sep_b = sep ? sep->data : "&";
   size_t sep_len = sep ? sep->len : 1;
   const char *eq_b = eq ? eq->data : "=";
   size_t eq_len = eq ? eq->len : 1;
-  if (!obj || (obj->kind != SCR_DYN_OBJ && obj->kind != SCR_DYN_ARR)) return scr_str_new("", 0);
-  ScrDyn *keys = scr_dyn_obj_keys((ScrDyn *)obj);
+  if (!obj) return scr_str_new("", 0);
+  /* ObjectKeys once; the values are read from obj itself as the loop
+   * reaches them, so a capsule answers what the encoder has changed. */
+  ScrDyn *keys = NULL;
+  if (obj->kind == SCR_DYN_TYPED_REF) {
+    ScrDyn *view = scr_dyn_typed_ref_materialize(obj);
+    if (!view || scr_exc_pending()) {
+      scr_dyn_release(view);
+      return NULL;
+    }
+    if (view->kind == SCR_DYN_OBJ || view->kind == SCR_DYN_ARR) keys = scr_dyn_obj_keys(view);
+    else keys = scr_dyn_new_arr();
+    scr_dyn_release(view);
+  } else if (obj->kind == SCR_DYN_OBJ || obj->kind == SCR_DYN_ARR) {
+    keys = scr_dyn_obj_keys((ScrDyn *)obj);
+  } else {
+    return scr_str_new("", 0);
+  }
   if (!keys) return NULL;
   ScrStr *empty = scr_str_new("", 0);
   ScrDyn *fields = scr_dyn_new_str(empty);
@@ -735,14 +785,10 @@ ScrStr *scr_qs_stringify_custom(const ScrDyn *obj, const ScrStr *sep, const ScrS
   bool any = false;
   for (size_t i = 0; fields && i < keys->v.arr.len; i++) {
     const ScrDyn *kd = keys->v.arr.items[i];
-    const ScrStr *k = kd->v.str;
-    const ScrDyn *v = obj->kind == SCR_DYN_ARR ? obj->v.arr.items[strtoull(k->data, NULL, 10)]
-                                               : scr_dyn_obj_get(obj, k->data, k->len);
-    if (!v) continue;
-    ScrDyn *view = v->kind == SCR_DYN_TYPED_REF ? scr_dyn_typed_ref_materialize(v) : NULL;
-    if (view) v = view;
-    if (scr_exc_pending()) {
-      scr_dyn_release(view);
+    /* v is held across the encoder calls below, which may replace or
+     * delete obj[k]. */
+    ScrDyn *v = qs_read(obj, kd->v.str);
+    if (!v) {
       scr_dyn_release(fields);
       fields = NULL;
       break;
@@ -763,20 +809,48 @@ ScrStr *scr_qs_stringify_custom(const ScrDyn *obj, const ScrStr *sep, const ScrS
       }
     }
     if (!ks) {
-      scr_dyn_release(view);
+      scr_dyn_release(v);
       scr_dyn_release(fields);
       fields = NULL;
       break;
     }
-    if (v->kind == SCR_DYN_ARR) {
-      for (size_t j = 0; fields && j < v->v.arr.len; j++) {
+    /* ArrayIsArray(v) and v.length, after the key's encoder call. */
+    bool array = v->kind == SCR_DYN_ARR;
+    size_t vlen = array ? v->v.arr.len : 0;
+    if (v->kind == SCR_DYN_TYPED_REF) {
+      ScrDyn *view = scr_dyn_typed_ref_materialize(v);
+      if (!view || scr_exc_pending()) {
+        scr_dyn_release(view);
+        scr_dyn_release(ks);
+        scr_dyn_release(v);
+        scr_dyn_release(fields);
+        fields = NULL;
+        break;
+      }
+      array = view->kind == SCR_DYN_ARR;
+      vlen = array ? view->v.arr.len : 0;
+      scr_dyn_release(view);
+    }
+    if (array) {
+      /* Node reads the length once and each element as the loop reaches
+       * it: an encoder that grows the array adds no values, and one that
+       * shrinks it leaves empty values. */
+      for (size_t j = 0; fields && j < vlen; j++) {
         if (any) fields = qs_append_text(fields, sep_b, sep_len);
         if (fields) {
           ScrDyn *joined = scr_dyn_add(fields, ks);
           scr_dyn_release(fields);
           fields = joined;
         }
-        if (fields) fields = qs_append_encoded(fields, encoder, v->v.arr.items[j]);
+        if (fields) {
+          ScrDyn *item = qs_element(v, j);
+          if (item) fields = qs_append_encoded(fields, encoder, item);
+          else {
+            scr_dyn_release(fields);
+            fields = NULL;
+          }
+          scr_dyn_release(item);
+        }
         any = true;
       }
     } else {
@@ -790,7 +864,7 @@ ScrStr *scr_qs_stringify_custom(const ScrDyn *obj, const ScrStr *sep, const ScrS
       any = true;
     }
     scr_dyn_release(ks);
-    scr_dyn_release(view);
+    scr_dyn_release(v);
   }
   scr_dyn_release(keys);
   if (!fields) return NULL;
