@@ -5,8 +5,10 @@ import { expect, test } from "vitest";
 import { compile, deserializeModule } from "../src/index.js";
 import type { IrExpr } from "../src/ir/ir.js";
 
-/** The delay argument of every setTimeout/setInterval libCall in the module. */
-async function timerDelays(source: string): Promise<IrExpr[]> {
+type TimerCall = Extract<IrExpr, { kind: "libCall" }>;
+
+/** Every setTimeout/setInterval libCall in the module. */
+async function timerCalls(source: string): Promise<TimerCall[]> {
   const dir = await mkdtemp(join(tmpdir(), "scriptc-timer-delays-"));
   try {
     const entry = join(dir, "main.ts");
@@ -16,7 +18,7 @@ async function timerDelays(source: string): Promise<IrExpr[]> {
     if (!result.ok)
       throw new Error(result.diagnostics.map((d) => `${d.code}: ${d.message}`).join("\n"));
     const mod = deserializeModule(await readFile(outPath, "utf8"));
-    const delays: IrExpr[] = [];
+    const calls: TimerCall[] = [];
     const visit = (value: unknown): void => {
       if (Array.isArray(value)) {
         for (const item of value) visit(item);
@@ -29,14 +31,19 @@ async function timerDelays(source: string): Promise<IrExpr[]> {
         typeof node.fn === "string" &&
         /^timers\.set(Timeout|TimeoutHandle|Interval)$/.test(node.fn)
       )
-        delays.push(node.args![1]!);
+        calls.push(node as TimerCall);
       for (const child of Object.values(value)) visit(child);
     };
     visit(mod.functions);
-    return delays;
+    return calls;
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
+}
+
+/** The delay argument of every setTimeout/setInterval libCall in the module. */
+async function timerDelays(source: string): Promise<IrExpr[]> {
+  return (await timerCalls(source)).map((call) => call.args[1]!);
 }
 
 test("number delays pass to the timer unchanged", async () => {
@@ -93,4 +100,24 @@ test("a number | undefined delay converts with ToNumber", async () => {
       },
     });
   }
+});
+
+test("an imported timer call stays real through an untyped delay", async () => {
+  const calls = await timerCalls(
+    `import { setTimeout as realSetTimeout, setInterval as realSetInterval } from "node:timers";
+    function arm(delay: any): void {
+      realSetTimeout(() => console.log("a"), delay);
+      realSetInterval(() => console.log("b"), delay);
+      setTimeout(() => console.log("c"), delay);
+    }
+    arm(1);
+    export {};
+    `,
+  );
+  // An untyped delay waits in a hidden local, so the call sits inside a
+  // seqExpr; the callee still decides whether mock.timers routes it.
+  expect(calls.map((call) => call.realTimer)).toEqual([true, true, undefined]);
+  expect(calls[0]).toMatchObject({ fn: "timers.setTimeout" });
+  expect(calls[1]).toMatchObject({ fn: "timers.setInterval" });
+  expect(calls[2]).toMatchObject({ fn: "timers.setTimeout" });
 });

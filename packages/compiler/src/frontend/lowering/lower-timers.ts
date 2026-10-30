@@ -341,14 +341,18 @@ function isRealTimerCallee(lowerer: Lowerer, callee: ts.Expression): boolean {
 }
 
 /** Marks a lowered timer call `realTimer` when its callee is a binding
- * mock.timers does not replace. */
+ * mock.timers does not replace. A call whose delay is stored first returns a
+ * `seqExpr` around the call, so the mark goes on the call inside it. */
 function markRealTimerCall(
   lowerer: Lowerer,
   expr: ts.CallExpression,
   lowered: IrExpr | null,
 ): IrExpr | null {
-  if (lowered?.kind !== "libCall" || !MOCKABLE_TIMER_FNS.has(lowered.fn)) return lowered;
-  return isRealTimerCallee(lowerer, expr.expression) ? { ...lowered, realTimer: true } : lowered;
+  const call = lowered?.kind === "seqExpr" ? lowered.result : lowered;
+  if (call?.kind !== "libCall" || !MOCKABLE_TIMER_FNS.has(call.fn)) return lowered;
+  if (!isRealTimerCallee(lowerer, expr.expression)) return lowered;
+  const marked: IrExpr = { ...call, realTimer: true };
+  return lowered?.kind === "seqExpr" ? { ...lowered, result: marked } : marked;
 }
 
 /** One timer call by MEMBER NAME — the shared lowering behind the ambient
