@@ -6430,10 +6430,15 @@ ScrDyn *scr_dyn_bytes_key_get(const ScrDyn *value, const ScrStr *key) {
  * bodies — the overwhelming test shape — are exact. */
 static SCR_TL bool scr_dyn_chunk_utf8;
 void scr_dyn_chunk_enc(bool utf8) { scr_dyn_chunk_utf8 = utf8; }
+/* A firing site that decodes with a StringDecoder (net sockets) names
+ * the decoded string instead (borrowed; NULL closes the window). */
+static SCR_TL ScrStr *scr_dyn_chunk_str;
+void scr_dyn_chunk_text(ScrStr *text) { scr_dyn_chunk_str = text; }
 
 /* One 'data' payload as the dyn value the current window dictates:
  * a Buffer-flavored bytes box, or a string inside a setEncoding window. */
 ScrDyn *scr_dyn_new_chunk(const ScrBytes *b) {
+  if (scr_dyn_chunk_str != NULL) return scr_dyn_new_str(scr_dyn_chunk_str);
   if (scr_dyn_chunk_utf8) {
     ScrStr *s = scr_bytes_string(b, 0, b->len);
     ScrDyn *d = scr_dyn_new_str(s);
