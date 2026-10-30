@@ -2004,6 +2004,11 @@ export interface IrFunction {
    * `index`: a computed read `(value, key)` whose callers pass a number
    * converted to a string as the key. */
   fastRead?: "index";
+  /** The body of a function whose parameter version takes its calls with
+   * int32 arguments (parameter-versions.ts). It runs for other arguments
+   * only, so the backend emits each of its loops once, as in the copy a
+   * failed version guard runs. */
+  plainLoops?: true;
   /** Async: the body runs on a fiber; `returnType` is the INNER type T (a
    * `return v` fulfills with v) while ordinary call sites receive
    * Promise<T>. With `generator` present, call sites receive the lazy
