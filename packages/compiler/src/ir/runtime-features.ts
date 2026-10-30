@@ -868,6 +868,9 @@ const FS_BUFFER_SEARCH_METHODS: ReadonlySet<string> = new Set([
  * tag adds nothing: every such test is preceded by the box it inspects. */
 function fsBufferBrandObserved(node: IrExpr, carriesBytes: (t: IrType) => boolean): boolean {
   if (node.kind === "dynFrom") return carriesBytes(node.value.type);
+  // A checked-dynamic function called from typed code: its thunk boxes the
+  // arguments it is given.
+  if (node.kind === "dynCheck" && node.type.kind === "func") return carriesBytes(node.type);
   if (node.kind === "bytesIntrinsic") return FS_BUFFER_SEARCH_METHODS.has(node.method);
   // buffer.isBranded is Buffer.isBuffer on a typed bytes value; insp.bytes
   // renders a Buffer as <Buffer ..> and a Uint8Array by its elements.
@@ -894,6 +897,10 @@ export function moduleUsesFsBufferBrand(mod: IrModule): boolean {
         return carriesBytes(t.elem);
       case "promise":
         return carriesBytes(t.inner);
+      case "func":
+        // A boxed function's call thunk boxes its result, and a checked
+        // function's thunk boxes its arguments, with no dynFrom in the IR.
+        return carriesBytes(t.ret) || t.params.some((p) => carriesBytes(p));
       case "record": {
         if (seen.has(t.shapeId)) return false;
         seen.add(t.shapeId);

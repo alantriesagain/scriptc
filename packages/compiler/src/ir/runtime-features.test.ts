@@ -218,6 +218,42 @@ describe("runtime feature snapshots", () => {
       expr: { kind: "dynFrom", type: DYN, loc, value: data },
     });
     expect(moduleRuntimeFeatures(boxed).fsBufferBrand).toBe(true);
+    // A function returning bytes boxed into dyn: its call thunk boxes the
+    // result.
+    const reader = { kind: "func" as const, params: [], ret: bytes };
+    const boxedReader = withRead();
+    boxedReader.functions[0]!.locals.push({
+      id: "reader",
+      name: "reader",
+      mutable: false,
+      type: reader,
+    });
+    boxedReader.functions[0]!.body.push({
+      kind: "exprStmt",
+      loc,
+      expr: {
+        kind: "dynFrom",
+        type: DYN,
+        loc,
+        value: { kind: "varRef", localId: "reader", type: reader, loc },
+      },
+    });
+    expect(moduleRuntimeFeatures(boxedReader).fsBufferBrand).toBe(true);
+    // A checked-dynamic function typed to take bytes: its thunk boxes the
+    // argument.
+    const consumer = { kind: "func" as const, params: [bytes], ret: VOID };
+    const checkedConsumer = withRead();
+    checkedConsumer.functions[0]!.body.push({
+      kind: "exprStmt",
+      loc,
+      expr: {
+        kind: "dynCheck",
+        type: consumer,
+        loc,
+        value: { kind: "varRef", localId: "callback", type: DYN, loc },
+      },
+    });
+    expect(moduleRuntimeFeatures(checkedConsumer).fsBufferBrand).toBe(true);
   });
 
   test("gates the Buffer brand off without a typed read", () => {
