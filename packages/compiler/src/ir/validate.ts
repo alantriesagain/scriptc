@@ -4154,6 +4154,7 @@ function validateFunction(
       e.fn === "emitter.emit" ||
       e.fn === "emitter.emitFlex" ||
       e.fn === "emitter.emitAny" ||
+      e.fn === "emitter.emitErrorValue" ||
       e.fn === "emitter.emitMixed" ||
       e.fn === "readable.new" ||
       e.fn === "writable.new" ||
@@ -6191,6 +6192,12 @@ function validateFunction(
           err(`libCall ${e.fn} payloads must be checked-dynamic`, e.loc);
         }
       }
+      if (
+        e.fn === "emitter.emitErrorValue" &&
+        e.args.slice(1).some((arg) => arg.type.kind !== "dyn")
+      ) {
+        err(`libCall emitter.emitErrorValue payloads must be checked-dynamic`, e.loc);
+      }
       if (e.fn === "emitter.emitMixed") {
         const count = e.args[2];
         const k = count?.kind === "numLit" ? count.value : -1;
@@ -6204,6 +6211,7 @@ function validateFunction(
         e.fn === "emitter.emit" ||
         e.fn === "emitter.emitFlex" ||
         e.fn === "emitter.emitAny" ||
+        e.fn === "emitter.emitErrorValue" ||
         e.fn === "emitter.emitMixed" ||
         e.fn === "emitter.hasTyped" ||
         e.fn === "emitter.listenersDyn" ||

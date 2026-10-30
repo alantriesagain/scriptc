@@ -1121,6 +1121,8 @@ const RUNTIME_FEATURE_RULES = {
       "webstream.class",
       "webstream.install",
       "util.styleText",
+      // ERR_UNHANDLED_ERROR quotes util.inspect of a non-Error payload.
+      "emitter.emitErrorValue",
       "crypto.cipherNew",
       "webcrypto.encrypt",
       "webcrypto.decrypt",
