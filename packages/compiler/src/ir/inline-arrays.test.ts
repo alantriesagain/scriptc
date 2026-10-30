@@ -325,6 +325,82 @@ test("a copy of an alias and the checked element reader read the field", () => {
   expect(text.match(/"kind":"fieldGet"/g)).toHaveLength(2);
 });
 
+test("the checked element reader reads the instance from before its index evaluates", () => {
+  const MAYBE: IrType = { kind: "union", unionId: "maybeItem" };
+  const reader = fn(
+    "%arr.idxOr.items",
+    [
+      { id: "a", type: ITEMS },
+      { id: "i", type: F64 },
+    ],
+    [
+      {
+        loc,
+        kind: "return",
+        value: {
+          loc,
+          kind: "unionWrap",
+          unionId: "maybeItem",
+          tag: 0,
+          value: {
+            loc,
+            kind: "arrayGet",
+            arr: ref("a", ITEMS),
+            index: ref("i", F64),
+            type: obj("Item"),
+          },
+          type: MAYBE,
+        },
+      },
+    ],
+  );
+  // `list.items[(list = other, 0)]`: the read is of the first list's elements.
+  const index: IrExpr = {
+    loc,
+    kind: "seqExpr",
+    stmts: [{ loc, kind: "assign", localId: "list", value: ref("other", obj("List")) }],
+    result: { loc, kind: "numLit", value: 0, type: F64 },
+    type: F64,
+  };
+  const pick = fn(
+    "%pick",
+    [{ id: "other", type: obj("List") }],
+    [
+      { loc, kind: "varDecl", localId: "list", init: ref("other", obj("List")) },
+      {
+        loc,
+        kind: "exprStmt",
+        expr: {
+          loc,
+          kind: "call",
+          callee: "%arr.idxOr.items",
+          args: [get(ref("list", obj("List")), "List", "items", ITEMS), index],
+          type: MAYBE,
+        },
+      },
+    ],
+    [{ id: "list", type: obj("List"), mutable: true }],
+  );
+  const m = mod([reader, pick]);
+  const out = inlineArrayReads(m, planInlineArrays(m, lifetime)).functions.find(
+    (f) => f.name === "%pick",
+  )!;
+  const read = (out.body[1] as IrStmt & { kind: "exprStmt" }).expr as IrExpr & { kind: "seqExpr" };
+  expect(read.kind).toBe("seqExpr");
+  // The instance goes into a local, then the index; the field is read off that local.
+  const [owner, at] = read.stmts as (IrStmt & { kind: "varDecl" })[];
+  expect(owner!.init).toMatchObject({ kind: "varRef", localId: "list" });
+  expect(at!.init).toEqual(index);
+  expect(read.result).toMatchObject({
+    kind: "unionWrap",
+    value: {
+      kind: "arrayGet",
+      arr: { kind: "fieldGet", obj: { kind: "varRef", localId: owner!.localId } },
+      index: { kind: "varRef", localId: at!.localId },
+    },
+  });
+});
+
 test("an alias that escapes stays an array local", () => {
   const sum = fn(
     "%keep",

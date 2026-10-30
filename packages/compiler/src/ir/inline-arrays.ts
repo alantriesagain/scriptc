@@ -442,7 +442,8 @@ const INDEX_READER = "%arr.idxOr.";
 /** `call` of an element reader as the reader's own expression over the
  * call's array and index, so that a read of an inline field there reads the
  * instance: the index evaluates once, into a local unless it is a local or
- * a constant. Null when the reader is not one returned expression. */
+ * a constant, and then after the instance the field is read off, which goes
+ * into a local first. Null when the reader is not one returned expression. */
 function inlineIndexRead(
   call: IrExpr & { kind: "call" },
   reader: IrFunction,
@@ -461,8 +462,16 @@ function inlineIndexRead(
   )
     return null;
   const stmts: IrStmt[] = [];
+  let array = arr;
   let at = index;
   if (index.kind !== "varRef" && !isConstant(index)) {
+    // The call reads the array before the index, which may assign the
+    // local the field is read off: the instance goes into a local first.
+    if (arr.kind === "fieldGet" && arr.obj.kind === "varRef") {
+      const owner = fresh("owner", arr.obj.type);
+      stmts.push({ kind: "varDecl", localId: owner, init: arr.obj, loc: arr.loc });
+      array = { ...arr, obj: { ...arr.obj, localId: owner } };
+    }
     const id = fresh("index", index.type);
     stmts.push({ kind: "varDecl", localId: id, init: index, loc: index.loc });
     at = { kind: "varRef", localId: id, type: index.type, loc: index.loc };
@@ -476,7 +485,7 @@ function inlineIndexRead(
       e.kind !== "varRef"
         ? e
         : e.localId === arrParam.localId
-          ? copy(arr)
+          ? copy(array)
           : e.localId === indexParam.localId
             ? copy(at)
             : e,
