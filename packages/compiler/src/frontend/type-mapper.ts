@@ -7451,20 +7451,36 @@ function mapEqualConstituentsIntersection(widened: ts.Type, ctx: TypeMapperCtx):
 function mapClassExpandoIntersection(widened: ts.Type, ctx: TypeMapperCtx): IrType | null {
   const { checker } = ctx;
   if (checker.getConstructSignatures(widened).length > 0) return null;
-  let classes = 0;
+  let classPart: ts.Type | null = null;
+  const expandoParts: ts.Type[] = [];
   for (const part of ts.constituentTypes(widened)) {
     const mapped = mapType(part, ctx);
     if (mapped === null) return null;
     if (mapped.kind === "object") {
-      if (++classes > 1) return null;
+      if (classPart !== null) return null;
+      classPart = part;
       continue;
     }
     // The expando members are DATA: a plain record, with no call or
     // construct signature of its own.
     if (mapped.kind !== "record") return null;
     if (checker.getCallSignatures(part).length > 0) return null;
+    expandoParts.push(part);
   }
-  return classes === 1 ? DYN : null;
+  if (classPart === null) return null;
+  // The expando members are properties the class does not declare. An
+  // index signature names every key, and a member the class declares
+  // restates the class's own storage: both refine the class's members
+  // rather than add to them, and keep their diagnostics.
+  const classMembers = new Set(
+    checker.getPropertiesOfType(classPart).map((member) => ts.symbolName(member)),
+  );
+  for (const part of expandoParts) {
+    if (checker.getIndexInfosOfType(part).length > 0) return null;
+    for (const member of checker.getPropertiesOfType(part))
+      if (classMembers.has(ts.symbolName(member))) return null;
+  }
+  return DYN;
 }
 
 function mapHybridCallableIntersection(widened: ts.Type, ctx: TypeMapperCtx): IrType | null {
