@@ -951,6 +951,32 @@ export function lowerPropertyAccessExpr(
     const promiseMember = lowerPromiseConstructorRead(lowerer, expr);
     if (promiseMember) return promiseMember;
   }
+  // A weak collection's method read as a VALUE in a JavaScript source
+  // (`wm.has.call(x, k)` — the WeakMap/WeakSet brand-check tests): the
+  // runtime's interned prototype function, which applies the method to its
+  // own receiver and throws Node's TypeError for a foreign one. A direct
+  // call keeps the instance fast path (`dynKeyGet` dispatches to the
+  // handle), and an optional read keeps the fence.
+  if (
+    !expr.questionDotToken &&
+    isJsSourceFile(ts.getSourceFileOfNode(expr)) &&
+    !isCalleeOf(expr) &&
+    // `WeakMap.prototype.has` is the prototype table's own read: it never
+    // lowers the prototype object (a value read of `WeakMap.prototype`
+    // is a fence), so leave that spelling there.
+    !(
+      ts.isPropertyAccessExpression(expr.expression) &&
+      expr.expression.name.text === "prototype" &&
+      stdlibGlobalNameOf(lowerer, expr.expression.expression) !== null
+    )
+  ) {
+    const weak = lowerer.weakCollectionNamesOf(lowerer.typeOf(expr.expression));
+    if (
+      weak !== null &&
+      weak.names.some((prototype) => WEAK_COLLECTION_METHOD_NAMES[prototype].has(expr.name.text))
+    )
+      return weakCollectionMethodValue(lowerer, expr, weak.names, weak.nullable, expr.name.text);
+  }
   const handled =
     lowerer.lowerProcessEnvGet(expr) ??
     lowerer.lowerServerProperty(expr) ??
@@ -5268,6 +5294,103 @@ const OBJECT_PROTOTYPE_VALUE_READS: ReadonlySet<string> = new Set([
   "hasOwnProperty",
   "propertyIsEnumerable",
 ]);
+
+/** The method names each weak collection's prototype declares. */
+const WEAK_COLLECTION_METHOD_NAMES: Record<"WeakMap" | "WeakSet", ReadonlySet<string>> = {
+  WeakMap: new Set(["get", "set", "has", "delete"]),
+  WeakSet: new Set(["add", "has", "delete"]),
+};
+
+/** A weak-collection method read as a VALUE (`wm.has`, the
+ * `map.has.call(x, k)` brand-check tests): the runtime's interned prototype
+ * function for that name, which applies the method to its own receiver and
+ * throws Node's brand-check TypeError when that receiver is not a
+ * WeakMap/WeakSet. A receiver typed `WeakMap | WeakSet` picks the function by
+ * the collection the value holds, and one that admits `null`/`undefined`
+ * throws the property-read TypeError the read itself throws in Node. Only
+ * JavaScript sources take this path: a typed source keeps its refusal (the
+ * checker's signature has no value form). The receiver expression still runs
+ * for its effects. */
+function weakCollectionMethodValue(
+  lowerer: Lowerer,
+  expr: ts.PropertyAccessExpression,
+  prototypes: readonly ("WeakMap" | "WeakSet")[],
+  nullable: boolean,
+  name: string,
+): IrExpr {
+  const loc = locOf(expr);
+  const method = (prototype: "WeakMap" | "WeakSet"): IrExpr =>
+    WEAK_COLLECTION_METHOD_NAMES[prototype].has(name)
+      ? {
+          kind: "libCall",
+          fn: "dyn.builtinMethod",
+          args: [
+            { kind: "strLit", value: prototype, type: STRING, loc },
+            { kind: "strLit", value: name, type: STRING, loc: locOf(expr.name) },
+          ],
+          type: DYN,
+          loc,
+        }
+      : // The collection without the method reads it as undefined.
+        dynUndefinedExpr(loc);
+  const receiver = lowerer.lowerExpr(expr.expression);
+  if (!nullable && prototypes.length === 1) {
+    const value = method(prototypes[0]!);
+    return isSafeToDiscard(receiver)
+      ? value
+      : {
+          kind: "seqExpr",
+          stmts: [{ kind: "exprStmt", expr: receiver, loc: locOf(expr.expression) }],
+          result: value,
+          type: DYN,
+          loc,
+        };
+  }
+  // The receiver answers the kind and unit tests below, so it waits in a
+  // hidden local.
+  const held = lowerer.declareHiddenLocal("%weakRecv", DYN);
+  const ref = (): IrExpr => varRef(held.id, DYN, loc);
+  let value: IrExpr = method(prototypes[0]!);
+  if (prototypes.length > 1)
+    value = {
+      kind: "ternary",
+      cond: { kind: "libCall", fn: "weakMap.is", args: [ref()], type: BOOL, loc },
+      then: method("WeakMap"),
+      else_: method("WeakSet"),
+      type: DYN,
+      loc,
+    };
+  if (nullable)
+    value = {
+      kind: "ternary",
+      cond: { kind: "dynTest", test: "nullish", value: ref(), type: BOOL, loc },
+      // Node throws from the read itself, naming the unit and the member.
+      then: {
+        kind: "dynKeyGet",
+        value: ref(),
+        key: { kind: "strLit", value: name, type: STRING, loc },
+        type: DYN,
+        loc,
+      },
+      else_: value,
+      type: DYN,
+      loc,
+    };
+  return {
+    kind: "seqExpr",
+    stmts: [
+      {
+        kind: "varDecl",
+        localId: held.id,
+        init: lowerer.coerceInto(expr.expression, receiver, DYN),
+        loc,
+      },
+    ],
+    result: value,
+    type: DYN,
+    loc,
+  };
+}
 
 /** Whether `expr` is the callee of a call (`o.toString()`), which keeps its
  * call lowering rather than reading the member as a value. */
