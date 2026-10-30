@@ -50,8 +50,20 @@ test("number delays pass to the timer unchanged", async () => {
     export {};
     `,
   );
-  expect(delays.map((delay) => delay.kind)).toEqual(["varRef", "numLit", "varRef"]);
+  // A literal delay in range passes as it is. A number variable passes
+  // through timers.userDelay, which emits Node's Timeout warning when the
+  // timer sets the delay to 1; its second argument is 0 for setTimeout and 1
+  // for setInterval.
+  expect(delays.map((delay) => delay.kind)).toEqual(["libCall", "numLit", "libCall"]);
   for (const delay of delays) expect(delay.type).toEqual({ kind: "f64" });
+  expect(delays[0]).toMatchObject({
+    fn: "timers.userDelay",
+    args: [{ kind: "varRef" }, { kind: "numLit", value: 0 }],
+  });
+  expect(delays[2]).toMatchObject({
+    fn: "timers.userDelay",
+    args: [{ kind: "varRef" }, { kind: "numLit", value: 1 }],
+  });
 });
 
 test("a number | undefined delay converts with ToNumber", async () => {
@@ -67,13 +79,18 @@ test("a number | undefined delay converts with ToNumber", async () => {
   );
   expect(delays).toHaveLength(2);
   for (const delay of delays) {
-    // undefined is NaN, the omitted delay; a number passes through.
+    // undefined is NaN, the omitted delay, and warns nothing; a number
+    // passes through timers.userDelay.
     expect(delay).toMatchObject({
       kind: "ternary",
       type: { kind: "f64" },
       cond: { kind: "unionIsTag" },
       then: { kind: "bin", op: "/" },
-      else_: { kind: "unionNarrow", type: { kind: "f64" } },
+      else_: {
+        kind: "libCall",
+        fn: "timers.userDelay",
+        args: [{ kind: "unionNarrow", type: { kind: "f64" } }, { kind: "numLit" }],
+      },
     });
   }
 });
