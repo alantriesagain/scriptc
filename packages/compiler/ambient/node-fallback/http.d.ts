@@ -133,7 +133,7 @@ declare module "http" {
     writeHead(statusCode: number, headers?: OutgoingHttpHeaders | string[]): ServerResponse;
     writeHead(
       statusCode: number,
-      statusMessage: string,
+      statusMessage?: string,
       headers?: OutgoingHttpHeaders | string[],
     ): ServerResponse;
     writeContinue(callback?: () => void): void;

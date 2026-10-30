@@ -8378,7 +8378,13 @@ function lowerHttpResMethodCall(
         msg = lowerer.lowerExprExpecting(args[1]!, STRING);
       else headersNode = args[1];
     } else if (args.length === 3) {
-      msg = lowerer.lowerExprExpecting(args[1]!, STRING);
+      // writeHead(status, undefined | null, headers): Node takes a reason
+      // that is not a string as absent and reads the third argument.
+      const reason = args[1]!;
+      const absent =
+        reason.kind === ts.SyntaxKind.NullKeyword ||
+        (ts.isIdentifier(reason) && reason.text === "undefined");
+      if (!absent) msg = lowerer.lowerExprExpecting(reason, STRING);
       headersNode = args[2];
     }
     // Node answers the response (`return this` — the chaining shape
