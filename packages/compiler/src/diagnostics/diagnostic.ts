@@ -767,9 +767,11 @@ export const UNSUPPORTED: Record<string, UnsupportedEntry> = {
   SC1052: { feature: "for-in loops", milestone: "M4" }, // for-of over arrays shipped in M1
   // SC1060 (switch statements) shipped — code retired, do not reuse.
   // SC1061 (exceptions: throw/try/catch/finally) shipped — code retired, do
-  // not reuse. (Identifier catch bindings shipped too; what remains rejected
-  // is destructuring patterns — SC1062 — un-narrowed binding uses —
-  // SC1063 — and jumps crossing a finally — SC1090.)
+  // not reuse. (Identifier catch bindings shipped too, and a catch clause
+  // that destructures ships through the checked-dynamic tree; what remains
+  // rejected is a destructuring pattern in a promise handler's parameter —
+  // SC1062 — un-narrowed binding uses — SC1063 — and jumps crossing a
+  // finally — SC1090.)
   SC1062: {
     feature: "destructuring catch clause bindings",
     milestone: "later",
