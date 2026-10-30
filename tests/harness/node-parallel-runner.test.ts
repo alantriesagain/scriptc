@@ -24,13 +24,17 @@ test("runs that end by different signals, or by a signal and an exit, differ", (
   expect(termination({ code: 0, signal: null })).toBe(0);
 });
 
-test("a relative --node path links the checkout's fixtures into the minimal tree", () => {
+test("a relative --node path links the checkout's fixtures and common helpers into the minimal tree", () => {
   const checkout = join(scratch, "node");
   mkdirSync(join(checkout, "test", "parallel"), { recursive: true });
   mkdirSync(join(checkout, "test", "fixtures"), { recursive: true });
   mkdirSync(join(checkout, "test", "common"), { recursive: true });
   writeFileSync(join(checkout, "test", "fixtures", "marker.txt"), "fixture\n");
-  writeFileSync(join(checkout, "test", "common", "fixtures.js"), "module.exports = {};\n");
+  for (const helper of ["fixtures.js", "dns.js", "internet.js"])
+    writeFileSync(
+      join(checkout, "test", "common", helper),
+      `module.exports = ${JSON.stringify(helper)};\n`,
+    );
   const out = join(scratch, "out");
   const result = spawnSync(
     process.execPath,
@@ -49,4 +53,9 @@ test("a relative --node path links the checkout's fixtures into the minimal tree
   const linked = join(out, "tree", "test", "fixtures", "marker.txt");
   expect(existsSync(linked)).toBe(true);
   expect(readFileSync(linked, "utf8")).toBe("fixture\n");
+  for (const helper of ["dns.js", "internet.js"])
+    expect(readFileSync(join(out, "tree", "test", "common", helper), "utf8")).toBe(
+      `module.exports = ${JSON.stringify(helper)};\n`,
+    );
+  expect(existsSync(join(out, "tree", "test", "common", "tmpdir.js"))).toBe(true);
 });

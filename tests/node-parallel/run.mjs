@@ -42,8 +42,8 @@ const out = resolve(values.out);
 mkdirSync(out, { recursive: true });
 
 // The minimal lane copies the selected files into a tree whose test/common is
-// this directory's index.cjs and wpt.cjs, next to the checkout's fixtures and
-// common/fixtures.js.
+// this directory's index.cjs, wpt.cjs and tmpdir.cjs, next to the checkout's
+// fixtures, common/fixtures.js, common/dns.js and common/internet.js.
 let testRoot = nodeTest;
 const files = readdirSync(join(nodeTest, "parallel"))
   .filter((name) => name.endsWith(".js") && pattern.test(name))
@@ -59,6 +59,9 @@ if (values.common === "minimal") {
   cpSync(join(nodeTest, "common", "fixtures.js"), join(testRoot, "common", "fixtures.js"));
   cpSync(join(here, "common", "index.cjs"), join(testRoot, "common", "index.js"));
   cpSync(join(here, "common", "wpt.cjs"), join(testRoot, "common", "wpt.js"));
+  cpSync(join(here, "common", "tmpdir.cjs"), join(testRoot, "common", "tmpdir.js"));
+  for (const helper of ["dns.js", "internet.js"])
+    cpSync(join(nodeTest, "common", helper), join(testRoot, "common", helper));
 }
 
 function run(cmd, args, opts) {
