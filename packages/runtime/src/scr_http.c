@@ -5158,6 +5158,24 @@ static void scr_http_client_conn_free(ScrHttpConn *conn) {
 
 /* ── http.request / http.get ─────────────────────────────────────────── */
 
+/* ClientRequest's path check: characters outside U+0021..U+00FF throw
+ * ERR_UNESCAPED_CHARACTERS. In UTF-8, U+0080..U+00FF are the C2/C3 lead
+ * bytes. */
+static bool scr_http_request_path_valid(const ScrStr *path /*borrowed*/) {
+  for (size_t i = 0; i < path->len; i++) {
+    unsigned char ch = (unsigned char)path->data[i];
+    if (ch >= 0x21 && ch < 0x80) continue;
+    if (ch == 0xc2 || ch == 0xc3) {
+      i++;
+      continue;
+    }
+    static const char msg[] = "Request path contains unescaped characters";
+    scr_throw_error_msg_code(SCR_ERR_TYPE, msg, sizeof msg - 1, "ERR_UNESCAPED_CHARACTERS");
+    return false;
+  }
+  return true;
+}
+
 static ScrHttpClientReq *scr_http_request_impl(ScrStr *host /*borrowed*/, double port,
                                                 ScrStr *path /*borrowed*/, ScrStr *method /*borrowed*/,
                                                 double timeout_ms, ScrArr *header_pairs /*borrowed*/,
@@ -5165,11 +5183,16 @@ static ScrHttpClientReq *scr_http_request_impl(ScrStr *host /*borrowed*/, double
                                                 ScrHttpRespFn fn, int default_port,
                                                 void (*wrap)(ScrNetSocket *, void *), void *wrap_ctx,
                                                 ScrNetSocket *presock /*moves, nullable*/) {
-  /* Node's ClientRequest constructor validates the method token
-   * SYNCHRONOUSLY (RFC 9110 tchar, at least one): the catchable
+  /* Node's ClientRequest constructor validates the path, then the method
+   * token (RFC 9110 tchar, at least one): the catchable
    * ERR_INVALID_HTTP_TOKEN TypeError with Node's exact message, the raw
    * method text inside the quotes. Moved-in arguments release — the
    * request never exists. */
+  if (!scr_http_request_path_valid(path)) {
+    if (cb) scr_closure_release(cb);
+    if (presock) scr_net_sock_release(presock);
+    return NULL;
+  }
   bool method_ok = method->len > 0;
   for (size_t i = 0; i < method->len && method_ok; i++) {
     unsigned char ch = (unsigned char)method->data[i];
@@ -7435,19 +7458,7 @@ bool scr_http_req_opts_read(const ScrDyn *opts, bool secure, const char *api, Sc
       scr_http_req_opts_free(o);
       return false;
     }
-    bool bad = false;
-    for (size_t i = 0; i < o->path->len && !bad; i++) {
-      unsigned char ch = (unsigned char)o->path->data[i];
-      if (ch < 0x21) bad = true;
-      else if (ch >= 0x80) {
-        /* U+0080..U+00FF (lead byte C2/C3) pass; anything above is unescaped */
-        if (ch != 0xc2 && ch != 0xc3) bad = true;
-        else i++;
-      }
-    }
-    if (bad) {
-      static const char msg[] = "Request path contains unescaped characters";
-      scr_throw_error_msg_code(SCR_ERR_TYPE, msg, sizeof msg - 1, "ERR_UNESCAPED_CHARACTERS");
+    if (!scr_http_request_path_valid(o->path)) {
       scr_http_req_opts_free(o);
       return false;
     }

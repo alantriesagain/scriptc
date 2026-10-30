@@ -6499,6 +6499,33 @@ function lowerHttp2ModuleCall(
   );
 }
 
+/** The scalar request options the literal walk lowers, with the type it
+ * lowers each one at. */
+const LITERAL_REQUEST_OPTION_KINDS: ReadonlyMap<string, "string" | "f64"> = new Map([
+  ["hostname", "string"],
+  ["host", "string"],
+  ["port", "f64"],
+  ["path", "string"],
+  ["method", "string"],
+  ["timeout", "f64"],
+  ["maxHeaderSize", "f64"],
+]);
+
+/** Whether a literal's scalar option holds a value of another type than the
+ * literal walk lowers it at, which sends the literal to the runtime walk. */
+function runtimeCheckedOption(
+  lowerer: Lowerer,
+  prop: ts.PropertyAssignment | ts.ShorthandPropertyAssignment,
+): boolean {
+  const want = LITERAL_REQUEST_OPTION_KINDS.get(
+    (prop.name as ts.Identifier | ts.StringLiteral).text,
+  );
+  if (want === undefined) return false;
+  const value = ts.isPropertyAssignment(prop) ? prop.initializer : prop.name;
+  const t = lowerer.mapTypeOf(lowerer.typeOf(value));
+  return t !== null && t.kind !== want;
+}
+
 /** The checked-dynamic options value of a request whose options the
  * runtime reads: a non-literal options value (a RequestOptions variable —
  * checked-dynamic storage — or a record that converts to one), or a
@@ -6528,7 +6555,11 @@ function runtimeRequestOptions(
         (ts.isIdentifier(prop.name) || ts.isStringLiteral(prop.name)) &&
         (prop.name.text === "socketPath" ||
           // a client certificate: the runtime request walk reads cert and key
-          (secureish && (prop.name.text === "cert" || prop.name.text === "key")))
+          (secureish && (prop.name.text === "cert" || prop.name.text === "key")) ||
+          // a scalar option whose value is not the walk's type (an untyped
+          // or union value, a string port): the runtime walk runs Node's
+          // checks on it (ERR_INVALID_ARG_TYPE with the option's name)
+          runtimeCheckedOption(lowerer, prop))
       );
     });
     if (!needsRuntime) return null;
