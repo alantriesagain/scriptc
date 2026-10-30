@@ -440,6 +440,8 @@ export function applyKeyOrderWitnesses(lowerer: Lowerer, fns: readonly IrFunctio
     return f;
   };
   const observedRoots: IrType[] = [];
+  /** The receivers of the program's own-key presence tests. */
+  const presenceRoots: IrType[] = [];
   const inits = new Map<string, BindingInit>();
   const undefinedArmed = (t: IrType): boolean =>
     t.kind === "union" && lowerer.armTag(t.unionId, UNDEFINED_T) >= 0;
@@ -589,7 +591,12 @@ export function applyKeyOrderWitnesses(lowerer: Lowerer, fns: readonly IrFunctio
   };
   const visitExpr = (e: IrExpr): void => {
     const probe = notes.sourceProbeOf(e);
-    if (probe !== undefined && currentFn !== null) probeSites.push({ node: e, fn: currentFn });
+    if (probe !== undefined && currentFn !== null) {
+      probeSites.push({ node: e, fn: currentFn });
+      presenceRoots.push(probe.receiver.type);
+    }
+    if (e.kind === "call" && e.callee.startsWith("%obj.hasOwn") && e.args[0] !== undefined)
+      presenceRoots.push(e.args[0].type);
     switch (e.kind) {
       case "recordLit": {
         if (e.type.kind !== "record") return;
@@ -802,6 +809,23 @@ export function applyKeyOrderWitnesses(lowerer: Lowerer, fns: readonly IrFunctio
     const earlySeen = new Set<string>();
     for (const id of notes.observed) shapesIn({ kind: "record", shapeId: id }, early, earlySeen);
     for (const root of observedRoots) shapesIn(root, early, earlySeen);
+    // A presence test (`"k" in r`, Object.hasOwn) observes a record's own
+    // keys as an order surface does.
+    for (const root of presenceRoots) shapesIn(root, early, earlySeen);
+    // An observed copy shows the own keys of each record it spreads, so a
+    // spread source is observed through it, transitively.
+    for (let grew = true; grew;) {
+      grew = false;
+      for (const { literal, note } of widthSites) {
+        if (literal.type.kind !== "record" || !early.has(literal.type.shapeId)) continue;
+        for (const segment of note.segments) {
+          if (segment.kind !== "spread") continue;
+          const before = early.size;
+          shapesIn(segment.value.type, early, earlySeen);
+          if (early.size !== before) grew = true;
+        }
+      }
+    }
     for (let grew = true; grew;) {
       grew = false;
       for (const { wrapper, literal, note } of widthSites) {
@@ -866,10 +890,10 @@ export function applyKeyOrderWitnesses(lowerer: Lowerer, fns: readonly IrFunctio
       keptDropShapes.add(shapeId);
     }
     // Same-shape clones of a record that can keep keys copy them too, when
-    // the program keeps a width spread and the shape is observed. The
-    // source, not the clone, decides: a clone of a shape no conversion
-    // produces finds no keys to keep.
-    if (keptWidths.size > 0) {
+    // the program converts checked values or keeps a width spread and the
+    // shape is observed. The source, not the clone, decides: a clone of a
+    // shape no conversion produces finds no keys to keep.
+    if (lowerer.recordSourcesPossible || keptWidths.size > 0) {
       for (const { node } of cloneSites) {
         if (node.kind !== "recordClone") continue;
         const cloneT = node.type;
@@ -885,7 +909,7 @@ export function applyKeyOrderWitnesses(lowerer: Lowerer, fns: readonly IrFunctio
   // reflective surfaces below (and the two helper finalizers in
   // lower-calls.ts, which consult keptSourceShapes) stay static there, as
   // they did before this pass.
-  keepSourceProbes(lowerer, notes, probeSites, keptWidths.size > 0);
+  keepSourceProbes(lowerer, notes, probeSites, keptWidths.size > 0 || keptClones.size > 0);
   keepRecordClones(lowerer, cloneSites, keptClones);
 
   // ── scope ───────────────────────────────────────────────────────────
@@ -2072,12 +2096,11 @@ function conversionShapes(
   if (target.kind === "promise") return conversionShapes(lowerer, target.inner, out, seen);
   if (target.kind === "array") return conversionShapes(lowerer, target.elem, out, seen);
   if (target.kind === "record") {
-    if (recordMayKeepSource(lowerer, target)) {
-      out.add(target.shapeId);
-      return;
-    }
     if (seen.has(target.shapeId)) return;
     seen.add(target.shapeId);
+    // A conversion builds the records of its nested fields too, each with
+    // its own kept source.
+    if (recordMayKeepSource(lowerer, target)) out.add(target.shapeId);
     const shape = lowerer.shapes.get(target.shapeId);
     for (const field of shape?.fields ?? []) conversionShapes(lowerer, field.type, out, seen);
     if (shape?.indexValue !== undefined) conversionShapes(lowerer, shape.indexValue, out, seen);

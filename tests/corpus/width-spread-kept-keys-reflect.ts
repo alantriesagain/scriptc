@@ -35,3 +35,23 @@ reflect("parsed", parsed);
 
 // A record without undeclared keys answers from its declared fields.
 reflect("plain", { a: 3 });
+
+// A width spread observed only through a later spread that adds a field.
+type Point = { x: number };
+type Point3 = { x: number; y: number; z: number };
+const toPoint = (p: Point3): Point => ({ ...p });
+console.log("through spread", JSON.stringify({ ...toPoint({ x: 1, y: 2, z: 3 }), w: 4 }));
+
+// A width spread observed only by presence tests.
+type Tag = { id: number };
+type Tagged = { id: number; label: string };
+const toTag = (t: Tagged): Tag => ({ ...t });
+const tag = toTag({ id: 7, label: "seven" });
+console.log("presence", "label" in tag, Object.hasOwn(tag, "label"), Object.hasOwn(tag, "other"));
+
+// A same-shape spread of a record nested in a checked conversion.
+type Leaf = { v: number };
+type Tree = { leaf: Leaf };
+const tree = JSON.parse('{"leaf":{"v":1,"extra":2}}') as Tree;
+const leafCopy: Leaf = { ...tree.leaf };
+console.log("nested copy", JSON.stringify(leafCopy));

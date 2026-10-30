@@ -160,3 +160,47 @@ export {};
   );
   expect(notes).toBe(0);
 });
+
+test("a clone of a checked record keeps its keys without a kept width spread", async () => {
+  const { notes } = await sourceNotes(
+    `type R = { a: number };
+const r = JSON.parse('{"a":1,"extra":2}') as R;
+console.log(JSON.stringify({ ...r, a: 5 }));
+export {};
+`,
+  );
+  expect(notes).toBe(1);
+});
+
+test("a width spread observed only through a later spread keeps its keys", async () => {
+  const { notes } = await sourceNotes(
+    `${WIDE}const n = narrow({ a: 1, b: 2, c: 3 });
+console.log(JSON.stringify({ ...n, d: 4 }));
+export {};
+`,
+  );
+  expect(notes).toBe(2);
+});
+
+test("a width spread observed only by presence tests keeps its keys", async () => {
+  const { notes } = await sourceNotes(
+    `${WIDE}const n = narrow({ a: 1, b: 2, c: 3 });
+console.log(String("c" in n), String(Object.hasOwn(n, "c")));
+export {};
+`,
+  );
+  expect(notes).toBe(1);
+});
+
+test("a same-shape spread of a nested checked record copies its own keys", async () => {
+  const { notes } = await sourceNotes(
+    `type Inner = { v: number };
+type Outer = { inner: Inner };
+const o = JSON.parse('{"inner":{"v":1,"x":2}}') as Outer;
+const copy: Inner = { ...o.inner };
+console.log(JSON.stringify(copy));
+export {};
+`,
+  );
+  expect(notes).toBe(1);
+});
