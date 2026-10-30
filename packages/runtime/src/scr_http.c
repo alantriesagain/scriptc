@@ -5176,23 +5176,13 @@ static bool scr_http_request_path_valid(const ScrStr *path /*borrowed*/) {
   return true;
 }
 
-static ScrHttpClientReq *scr_http_request_impl(ScrStr *host /*borrowed*/, double port,
-                                                ScrStr *path /*borrowed*/, ScrStr *method /*borrowed*/,
-                                                double timeout_ms, ScrArr *header_pairs /*borrowed*/,
-                                                bool auto_end, ScrClosure *cb /*moves, nullable*/,
-                                                ScrHttpRespFn fn, int default_port,
-                                                void (*wrap)(ScrNetSocket *, void *), void *wrap_ctx,
-                                                ScrNetSocket *presock /*moves, nullable*/) {
-  /* Node's ClientRequest constructor validates the path, then the method
-   * token (RFC 9110 tchar, at least one): the catchable
-   * ERR_INVALID_HTTP_TOKEN TypeError with Node's exact message, the raw
-   * method text inside the quotes. Moved-in arguments release — the
-   * request never exists. */
-  if (!scr_http_request_path_valid(path)) {
-    if (cb) scr_closure_release(cb);
-    if (presock) scr_net_sock_release(presock);
-    return NULL;
-  }
+/* The ClientRequest constructor's checks that come before any socket
+ * exists, in Node's order: the path (ERR_UNESCAPED_CHARACTERS), then the
+ * method token (RFC 9110 tchar, at least one; ERR_INVALID_HTTP_TOKEN with
+ * the raw method text inside the quotes). False with the exception
+ * pending. */
+static bool scr_http_request_checks(const ScrStr *path /*borrowed*/, const ScrStr *method /*borrowed*/) {
+  if (!scr_http_request_path_valid(path)) return false;
   bool method_ok = method->len > 0;
   for (size_t i = 0; i < method->len && method_ok; i++) {
     unsigned char ch = (unsigned char)method->data[i];
@@ -5200,17 +5190,30 @@ static ScrHttpClientReq *scr_http_request_impl(ScrStr *host /*borrowed*/, double
                 (ch >= '0' && ch <= '9') ||
                 (ch != 0 && strchr("!#$%&'*+-.^_`|~", ch) != NULL);
   }
-  if (!method_ok) {
+  if (method_ok) return true;
+  ScrJsonBuf b;
+  scr_jb_init(&b);
+  scr_jb_puts(&b, "Method must be a valid HTTP token [\"");
+  scr_jb_write(&b, method->data, method->len);
+  scr_jb_puts(&b, "\"]");
+  ScrStr *msg = scr_jb_finish(&b);
+  scr_throw_error_msg_code(SCR_ERR_TYPE, msg->data, msg->len, "ERR_INVALID_HTTP_TOKEN");
+  scr_str_release(msg);
+  return false;
+}
+
+static ScrHttpClientReq *scr_http_request_impl(ScrStr *host /*borrowed*/, double port,
+                                                ScrStr *path /*borrowed*/, ScrStr *method /*borrowed*/,
+                                                double timeout_ms, ScrArr *header_pairs /*borrowed*/,
+                                                bool auto_end, ScrClosure *cb /*moves, nullable*/,
+                                                ScrHttpRespFn fn, int default_port,
+                                                void (*wrap)(ScrNetSocket *, void *), void *wrap_ctx,
+                                                ScrNetSocket *presock /*moves, nullable*/) {
+  /* Node's ClientRequest constructor checks; moved-in arguments release
+   * when they fail — the request never exists. */
+  if (!scr_http_request_checks(path, method)) {
     if (cb) scr_closure_release(cb);
     if (presock) scr_net_sock_release(presock);
-    ScrJsonBuf b;
-    scr_jb_init(&b);
-    scr_jb_puts(&b, "Method must be a valid HTTP token [\"");
-    scr_jb_write(&b, method->data, method->len);
-    scr_jb_puts(&b, "\"]");
-    ScrStr *msg = scr_jb_finish(&b);
-    scr_throw_error_msg_code(SCR_ERR_TYPE, msg->data, msg->len, "ERR_INVALID_HTTP_TOKEN");
-    scr_str_release(msg);
     return NULL;
   }
   scr_http_install();
@@ -5311,6 +5314,12 @@ ScrHttpClientReq *scr_http_request_conn(ScrClosure *conn_cb /*moves*/, ScrStr *p
                                          ScrStr *method /*borrowed*/, double timeout_ms,
                                          ScrArr *header_pairs /*borrowed*/, bool auto_end,
                                          ScrClosure *cb /*moves, nullable*/, ScrHttpRespFn fn) {
+  /* Node checks the path and method before it calls createConnection */
+  if (!scr_http_request_checks(path, method)) {
+    scr_closure_release(conn_cb);
+    if (cb != NULL) scr_closure_release(cb);
+    return NULL;
+  }
   ScrNetSocket *sock = ((ScrNetSocket *(*)(ScrClosure *))conn_cb->fn)(conn_cb); /* +1 result */
   scr_closure_release(conn_cb);
   if (scr_exc_pending() || sock == NULL) {
@@ -5832,6 +5841,11 @@ static ScrHttpClientReq *scr_http_request_pooled(ScrHttpAgent *ag, ScrStr *host 
                                                  void (*wrap)(ScrNetSocket *, void *),
                                                  void *wrap_ctx, ScrStr *pool_key /*borrowed*/,
                                                  ScrStr *socket_path /*borrowed*/) {
+  /* the constructor's checks come before the agent takes or dials a socket */
+  if (!scr_http_request_checks(path, method)) {
+    if (cb) scr_closure_release(cb);
+    return NULL;
+  }
   double p = port >= 0 ? port
            : ag->default_port > 0 ? ag->default_port
            : (double)default_port;
@@ -5892,6 +5906,11 @@ ScrHttpClientReq *scr_http_request_agent_ex(ScrStr *host /*borrowed*/, double po
   /* agent: false — Node's one-shot Agent: exactly this client's model,
    * plus its Connection: close request header (unless the caller set one) */
   if (agent->kind == SCR_DYN_BOOL && !agent->v.b) {
+    /* the constructor's checks come before a Unix socket is dialed */
+    if (!scr_http_request_checks(path, method)) {
+      if (cb) scr_closure_release(cb);
+      return NULL;
+    }
     double p = port >= 0 ? port : (double)default_port;
     bool has_conn = false;
     size_t npairs = (size_t)scr_arr_len(header_pairs);
