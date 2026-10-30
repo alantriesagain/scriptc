@@ -21,7 +21,9 @@ inline constexpr const char *CpuCopyAttribute = "scriptc-cpu-copy";
 // the level the executable chose.
 //
 // A copy is left as it is when its baseline copy is not defined in the
-// module or the two copies' types differ.
+// module, the two copies' types differ, or the profile gives the baseline
+// copy fewer runs (its body is then optimized as colder code). Every copy is
+// left as it is in a module that counts executions for a profile.
 void useBaselineBodies(llvm::Module &M);
 
 } // namespace scriptc

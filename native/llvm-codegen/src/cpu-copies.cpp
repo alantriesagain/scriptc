@@ -8,6 +8,7 @@
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/Dominators.h"
 #include "llvm/IR/Function.h"
+#include "llvm/IR/GlobalVariable.h"
 #include "llvm/IR/InstrTypes.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/IntrinsicInst.h"
@@ -17,6 +18,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -116,6 +118,30 @@ void useBaselineBody(Function &Copy, Function &Base,
     }
 }
 
+// Whether the module counts executions for a profile (`--profile-generate`,
+// also after inlining in a context-sensitive second phase): its functions
+// increment counters named after themselves (`__profc_<name>`).
+bool countsExecutions(const Module &M) {
+  for (const GlobalVariable &Global : M.globals())
+    if (Global.getName().starts_with("__profc_"))
+      return true;
+  for (const Function &F : M)
+    if (F.isIntrinsic() && F.getName().starts_with("llvm.instrprof."))
+      return true;
+  return false;
+}
+
+// Whether Base's body was optimized for fewer runs than Copy's: a profile
+// collected where the executable ran its x86-64-v3 copies gives their
+// baseline copies no runs, and the optimizer treats those as cold code.
+bool ranLess(const Function &Base, const Function &Copy) {
+  std::optional<Function::ProfileCount> Runs = Copy.getEntryCount();
+  if (!Runs)
+    return false;
+  std::optional<Function::ProfileCount> BaseRuns = Base.getEntryCount();
+  return !BaseRuns || BaseRuns->getCount() < Runs->getCount();
+}
+
 } // namespace
 
 void useBaselineBodies(Module &M) {
@@ -127,7 +153,10 @@ void useBaselineBodies(Module &M) {
     Functions[stem(F.getName())] = &F;
     HasCopies |= F.hasFnAttribute(CpuCopyAttribute);
   }
-  if (!HasCopies)
+  // A copy that took its baseline copy's body would count its executions
+  // against the baseline copy, and a build with the profile would then
+  // optimize the x86-64-v3 copy as if it never ran.
+  if (!HasCopies || countsExecutions(M))
     return;
   std::vector<std::pair<Function *, Function *>> Replaced;
   for (Function &F : M) {
@@ -142,7 +171,7 @@ void useBaselineBodies(Module &M) {
     Function *Base = It->second;
     if (Base->isDeclaration() || Base->hasAvailableExternallyLinkage() ||
         Base->getFunctionType() != F.getFunctionType() ||
-        !onlyNarrowVectors(F))
+        ranLess(*Base, F) || !onlyNarrowVectors(F))
       continue;
     Replaced.emplace_back(&F, Base);
   }
