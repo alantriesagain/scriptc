@@ -332,8 +332,13 @@ export function lowerQuerystringStringifyCall(
     }
   }
   // The encoder can change the object while stringify reads it, so a typed
-  // object crosses as a live capsule rather than a copy.
-  if (encoder && obj.kind === "dynFrom") obj = { ...obj, liveRef: true };
+  // record or array crosses as a live capsule rather than a copy. Primitives
+  // have nothing to change and cross by value.
+  const mutable = (t: IrType): boolean =>
+    t.kind === "record" ||
+    t.kind === "array" ||
+    (t.kind === "union" && (lowerer.unions.get(t.unionId)?.arms.some(mutable) ?? false));
+  if (encoder && obj.kind === "dynFrom" && mutable(objV.type)) obj = { ...obj, liveRef: true };
   if (encoder)
     return {
       kind: "libCall",

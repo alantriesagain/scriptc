@@ -79,3 +79,33 @@ console.log(
     },
   }),
 );
+
+// Values that are not objects serialize as the empty string and never call
+// the encoder; a value that is a record or a number is read live when it is
+// the record.
+let encoderCalls = 0;
+const counting = (s) => {
+  encoderCalls++;
+  return s;
+};
+console.log(
+  "primitives",
+  JSON.stringify([
+    qs.stringify(5, null, null, { encodeURIComponent: counting }),
+    qs.stringify("text", null, null, { encodeURIComponent: counting }),
+    qs.stringify(true, null, null, { encodeURIComponent: counting }),
+  ]),
+  encoderCalls,
+);
+const recordOr = (n) => (n > 0 ? { k: ["a", "b"] } : n);
+const either = recordOr(1);
+console.log(
+  "record or number",
+  qs.stringify(either, null, null, {
+    encodeURIComponent: (s) => {
+      if (s === "k" && typeof either === "object") either.k.splice(1);
+      return s;
+    },
+  }),
+  JSON.stringify(qs.stringify(recordOr(0), null, null, { encodeURIComponent: counting })),
+);
