@@ -66,6 +66,8 @@ export const OPTIONAL_RUNTIME_SOURCES = [
   // bigstats gate is narrower than bigint, which every bigint value turns on.
   ["scr_stats_bigint.c", "bigstats"],
   ["scr_regex.c", "regex"],
+  // path.win32.relative uses the regex unit's Unicode case mapping.
+  ["scr_path_win32_relative.c", "regex"],
   ["scr_glob.c", "regex"],
   ["scr_idna.c", "regex"],
   ["scr_assert.c", any("assert", "regex", "symbol")],
@@ -182,6 +184,7 @@ export const OPTIONAL_RUNTIME_SOURCES = [
   // TextEncoder and TextDecoder records boxed as untyped values.
   ["scr_text_codec_dyn.c", "textCodecDyn"],
   ["scr_watch.c", "watch"],
+  ["scr_watch_file.c", "watchFile"],
   ["scr_ffi_queue.c", "foreignFfi"],
   ["scr_test.c", "nodeTest"],
   ["scr_tls_ca.c", "tlsCaEffective"],
@@ -271,6 +274,17 @@ export function variantsFor(source) {
       id: "text-decoder-legacy",
       when: { textDecoderLegacy: true },
       defines: ["SCR_TEXT_DECODER_LEGACY"],
+    });
+  }
+  // fs.watchFile's poll needs a path stat that reports the errno (its failed
+  // poll IS a reportable event). The Stats snapshot is private to scr_lib.c,
+  // so the two entry points live in a build of that unit only programs that
+  // poll link; every other program keeps the default object, byte for byte.
+  if (source === "scr_lib.c") {
+    variants.push({
+      id: "fs-watch-file",
+      when: { watchFile: true },
+      defines: ["SCR_FS_WATCH_FILE"],
     });
   }
   // Programs that assign process.emitWarning link the replacement-aware

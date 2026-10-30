@@ -136,6 +136,7 @@ import {
   JS_RELAXED_TSC_CODES,
 } from "./tsc-codes.js";
 import { trackedFileExists, trackedReadFile, trackedRealpath } from "./input-tracker.js";
+import { earlyErrorDiagnostics7 } from "./early-errors.js";
 import { forkTargetPaths } from "./fork-target.js";
 import { workerTargetPaths } from "./worker-target.js";
 import {
@@ -2759,6 +2760,107 @@ function isAssignmentTarget7(node: ts.Node): boolean {
     parent.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
     parent.operatorToken.kind <= ts.SyntaxKind.LastAssignment
   );
+}
+
+/** True when the identifier is a reference position that WRITES: an
+ * assignment (or compound-assignment) target, a `++`/`--` operand, a
+ * for-in/for-of head, or an element of a destructuring pattern — through
+ * parentheses and pattern containers, exactly the shapes a sloppy-mode
+ * implicit global can be introduced by. */
+export function isJsWriteTarget7(node: ts.Node): boolean {
+  let cur: ts.Node = node;
+  for (;;) {
+    const parent: ts.Node | undefined = cur.parent;
+    if (parent === undefined) return false;
+    if (ts.isParenthesizedExpression(parent)) {
+      cur = parent;
+      continue;
+    }
+    if (ts.isBinaryExpression(parent))
+      return (
+        parent.left === cur &&
+        parent.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+        parent.operatorToken.kind <= ts.SyntaxKind.LastAssignment
+      );
+    if (ts.isPrefixUnaryExpression(parent) || ts.isPostfixUnaryExpression(parent))
+      return (
+        parent.operand === cur &&
+        (parent.operator === ts.SyntaxKind.PlusPlusToken ||
+          parent.operator === ts.SyntaxKind.MinusMinusToken)
+      );
+    if (ts.isForInStatement(parent) || ts.isForOfStatement(parent))
+      return parent.initializer === cur;
+    if (ts.isArrayLiteralExpression(parent) || ts.isObjectLiteralExpression(parent)) {
+      cur = parent;
+      continue;
+    }
+    if (
+      (ts.isShorthandPropertyAssignment(parent) && parent.name === cur) ||
+      (ts.isPropertyAssignment(parent) && parent.initializer === cur) ||
+      ((ts.isSpreadElement(parent) || ts.isSpreadAssignment(parent)) && parent.expression === cur)
+    ) {
+      cur = parent;
+      continue;
+    }
+    return false;
+  }
+}
+
+/** Nothing binds `node`: the tsc had no symbol, and a shorthand pattern's
+ * name has no VALUE binding either (its property symbol is the target, not a
+ * declaration of the name being written). */
+function undeclaredJsName7(
+  checker: ReturnType<ts.Program["getTypeChecker"]>,
+  node: ts.Identifier,
+): boolean {
+  const parent = node.parent;
+  if (parent !== undefined && ts.isShorthandPropertyAssignment(parent) && parent.name === node)
+    return checker.getShorthandAssignmentValueSymbol(parent) === undefined;
+  return checker.getSymbolAtLocation(node) === undefined;
+}
+
+/** A `.js` WRITE to a name nothing declares (plan D-2/D-5). Sloppy mode
+ * resolves such a write by creating a property on Node's global object —
+ * process-wide state a native binary has no object for — so the program is
+ * refused at build time, under SC1091, whose text names the Node-island
+ * route those semantics need. A READ of the same name is admitted instead:
+ * it throws Node's own catchable `ReferenceError` at the access
+ * (lowering/expressions/identifiers.ts). TypeScript input never reaches
+ * either path — an undeclared name is a compile error there. */
+function jsUndeclaredWriteDiags(
+  program: ts.Program,
+  files: readonly ts.SourceFile[],
+): ScrDiagnostic[] {
+  const diags: ScrDiagnostic[] = [];
+  const checker = program.getTypeChecker();
+  for (const sf of files) {
+    if (!isJsSourceFileName(sf.fileName)) continue;
+    const stack: ts.Node[] = [sf];
+    while (stack.length > 0) {
+      const node = stack.pop()!;
+      // An empty name is a parse-recovery artifact (`@import x = require(…)`
+      // in a JSDoc prologue leaves one behind), never a reference a program
+      // writes; the syntax error that created it is already reported.
+      if (
+        ts.isIdentifier(node) &&
+        node.text !== "" &&
+        isJsWriteTarget7(node) &&
+        undeclaredJsName7(checker, node)
+      )
+        diags.push(
+          unsupportedDiag(
+            "SC1091",
+            { file: sf.fileName, start: node.getStart(sf), end: node.end },
+            `writing the undeclared name '${node.text}' in a JavaScript source`,
+          ),
+        );
+      ts.forEachChild(node, (child) => {
+        stack.push(child);
+        return undefined;
+      });
+    }
+  }
+  return diags;
 }
 
 /** True when `node` is inside the try block of a try statement in the same
@@ -6592,6 +6694,11 @@ function preflight7(load: LoadResult): {
   };
   visit(entry);
 
+  // ECMAScript's sloppy-mode WRITE to an undeclared name, which the JS
+  // relaxation above admits for READS (plan D-2): refused by name, with the
+  // island route in the text (SC1091).
+  for (const d of jsUndeclaredWriteDiags(program, order)) diags.push(d);
+
   // The startup crash Node's RESOLUTION phase reports: modules resolve
   // their request specifiers in source order, children linking depth-first
   // as each resolves (ModuleJob.syncLink) — a preorder walk over the
@@ -6682,6 +6789,11 @@ function preflight7(load: LoadResult): {
           cjsNamedImportLinkCheck(program, entry, order, diags),
           esmNamedImportLinkCheck(program, entry, order, diags),
         );
+
+  // ECMAScript early errors the TypeScript checker does not model (plan
+  // §7.7 D-4): a JavaScript source the spec makes a SyntaxError fails here,
+  // before any lowering, exactly where a tsc parse error fails.
+  diags.push(...earlyErrorDiagnostics7(order, (sf) => isNodeEsmFile7(sf, program)));
 
   return {
     diags,

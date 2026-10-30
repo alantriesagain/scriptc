@@ -111,6 +111,7 @@ export interface EarlyExecutableNativeFeatures {
   dgramDyn: boolean;
   textCodecDyn: boolean;
   watch: boolean;
+  watchFile: boolean;
   foreignFfi: boolean;
   nodeTest: boolean;
   tls: boolean;
@@ -299,6 +300,7 @@ const BOOLEAN_NATIVE_KEYS = [
   "dgramDyn",
   "textCodecDyn",
   "watch",
+  "watchFile",
   "foreignFfi",
   "nodeTest",
   "tls",

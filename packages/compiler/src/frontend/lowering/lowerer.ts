@@ -30,7 +30,9 @@ import {
   irDataTable,
   journalDump,
   journalMode,
+  HeldTables,
   lowerWaveRecorded,
+  type WaveReuse,
   mapTable,
   setTable,
   waveStats,
@@ -41,6 +43,7 @@ import {
   type UnitEvents,
   type WaveHost,
 } from "./unit-journal.js";
+import { UnitReuse, unitReuseVerify, verifyStoredUnit, type UnitStore } from "./unit-reuse.js";
 import {
   moduleNamespaceDynValue,
   moduleNamespaceObject,
@@ -179,7 +182,9 @@ import {
 } from "./coercions/unions.js";
 import { assertedConversion } from "./coercions/asserted.js";
 import {
+  boxBuiltinValuesChecked,
   lowerUtilTypeValue,
+  checkedNativeCallableValue,
   pathModuleValue,
   utilTypesModuleValue,
 } from "./lower-builtin-values.js";
@@ -358,6 +363,7 @@ import {
   overridesDtsPath,
   npmStaticDepSf7,
   requireSpecOf,
+  isJsWriteTarget7,
   resolveImport,
   workspacePackageOfPath,
   type CycleEdge,
@@ -961,6 +967,9 @@ export interface LowerOptions {
   nodeIslands?: NodeIslandSet | null;
   /** Parser/checker services owned by the load; required for npm graph analysis. */
   frontendServices?: FrontendServices | undefined;
+  /** Where reachable emit stores its units' records and finds an earlier
+   * build's (unit-reuse.ts). */
+  unitStore?: UnitStore | null;
   /** The project's tsconfig sets `checkJs` (see isCheckedJsSourceFile). */
   projectCheckJs?: boolean;
   /** Coverage: additionally lower the unreached remainder (bodies nothing
@@ -1360,7 +1369,7 @@ function lowerToIrWithIslands(
         });
   for (const d of extraModuleCycleDiags) reachableEmit.pushDiag(d);
   for (const d of ffiValidation.diagnostics) reachableEmit.pushDiag(d);
-  const emitted = reachableEmit.emitReachable(options.libRoots);
+  const emitted = reachableEmit.emitReachable(options.libRoots, options.unitStore ?? null);
   let { reachable } = emitted;
   let result = emitted.result;
   let resultLowerer = reachableEmit;
@@ -3495,6 +3504,12 @@ export class Lowerer {
   /** Builtin function values whose `length` differs from their adapter's
    * parameter count (BuiltinModuleFn.valueLength), by adapter name. */
   readonly builtinCallableValueLengths = new Map<string, number>();
+  /** Typed builtin adapters with a checked twin (checkedBuiltinValue): the
+   * builtin, its display name and the location the twin is lowered at. */
+  readonly builtinCheckedValues = new Map<
+    string,
+    { fn: BuiltinModuleFn; display: string; loc: SrcLoc }
+  >();
   /** Optional-chain lowering state. While a chain body lowers, the guarded
    * receiver NODE reads as a chainRecv (typed by the narrowed arm) instead
    * of re-lowering, its checker type reads non-nullish (typeOf), and the
@@ -3859,6 +3874,9 @@ export class Lowerer {
   /** web-streams-dyn.ts's answer: whether a JavaScript source names a web
    * stream class; undefined until asked. */
   namesWebStreamClass: boolean | undefined = undefined;
+  /** web-streams-dyn.ts's answer: whether a TypeScript source uses a web
+   * stream operation the native streams lack; undefined until asked. */
+  typedWebStreams: boolean | undefined = undefined;
   /** The first lifted function of each name (liftedFnNamed), for the
    * liftedFns indexed so far. liftedFns only grows. */
   private readonly liftedFnsByName = new Map<string, IrFunction>();
@@ -4196,6 +4214,7 @@ export class Lowerer {
       mapTable("builtinCallableValueFns", this.builtinCallableValueFns),
       mapTable("builtinCallableValueNames", this.builtinCallableValueNames),
       countTable("builtinCallableValueLengths", this.builtinCallableValueLengths),
+      irDataTable("builtinCheckedValues", this.builtinCheckedValues),
       mapTable("regionRunHelpers", this.regionRunHelpers),
       mapTable("internTableHelpers", this.internTableHelpers),
       functionTable(
@@ -4493,6 +4512,7 @@ export class Lowerer {
     "sloppyThisGlobalReads",
     "globalLookupNames",
     "namesWebStreamClass",
+    "typedWebStreams",
     "timeValueDateDecisions",
     "timeValueDateWrites",
     "dynamicOverloadAnswers",
@@ -9652,6 +9672,7 @@ export class Lowerer {
   /** Final retention, pruning, and module assembly shared by ordinary emit
    * and the retained reachability worklist. */
   finishModule(functions: IrFunction[]): LowerResult {
+    boxBuiltinValuesChecked(this, functions);
     if (this.diags.length === 0) fuseArrayPipelines(this, functions);
     finalizeClassMethodValues(this, functions);
     finalizePrivateBrands(this, functions);
@@ -9940,7 +9961,10 @@ export class Lowerer {
    * demand-driven) and lifted lambdas lower inline with their enclosing
    * body; both fire edges through the same hooks and are not units
    * themselves. */
-  emitReachable(extraRoots?: readonly string[]): { reachable: Set<string>; result: LowerResult } {
+  emitReachable(
+    extraRoots?: readonly string[],
+    unitStore: UnitStore | null = null,
+  ): { reachable: Set<string>; result: LowerResult } {
     // Frontend passes below rewrite function bodies through the IR mapper
     // (caught-value and class dispatch); key-order notes follow the record
     // literals they rebuild until the witness pass has read them.
@@ -9998,12 +10022,16 @@ export class Lowerer {
     // Every lowerable body, by emitted-function name. The names double as
     // retained-function keys and are deterministic by construction
     // (qualified declaration names).
+    // `source` is the declaration whose text a unit lowers and `owners` the
+    // declarations around it (unit-reuse.ts).
     const units = new Map<
       string,
       {
         order: number;
         roots: readonly ts.Node[];
         lower: () => IrFunction | null;
+        source?: ts.Node | undefined;
+        owners?: readonly ts.Node[];
       }
     >();
     // Roots are collected with plain pushes: spread arguments into a rest
@@ -10047,6 +10075,7 @@ export class Lowerer {
             order: unitOrder++,
             roots: functionRoots(decl),
             lower: () => this.lowerFunction(decl),
+            source: decl,
           });
         }
       }
@@ -10067,6 +10096,7 @@ export class Lowerer {
           roots: classCtorRoots(info),
           lower: () =>
             info.localClass && !info.localClass.ready ? null : this.lowerClassCtor(info),
+          source: info.decl ?? undefined,
         });
         // The descriptor helpers of a class that extends Array, reached
         // from its constructor.
@@ -10075,11 +10105,13 @@ export class Lowerer {
             order: unitOrder++,
             roots: [],
             lower: () => arrayClassFieldsFn(this, info),
+            source: info.decl ?? undefined,
           });
           units.set(`%${cName}.species`, {
             order: unitOrder++,
             roots: [],
             lower: () => arrayClassSpeciesFn(this, info),
+            source: info.decl ?? undefined,
           });
         }
         for (const { mName, member } of this.classMethodMembers(info)) {
@@ -10090,6 +10122,8 @@ export class Lowerer {
               info.localClass && !info.localClass.ready
                 ? null
                 : this.lowerClassMethodMember(info, member),
+            source: member,
+            owners: info.decl ? [info.decl] : [],
           });
         }
         for (const prop of info.throwingSetters) {
@@ -10097,6 +10131,7 @@ export class Lowerer {
             order: unitOrder++,
             roots: [],
             lower: () => this.throwingSetterFn(info, prop),
+            source: info.decl ?? undefined,
           });
         }
       }
@@ -10106,6 +10141,8 @@ export class Lowerer {
             order: unitOrder++,
             roots: functionRoots(entry.member),
             lower: () => lowerStaticMethod(this, info, name),
+            source: entry.member,
+            owners: info.decl ? [info.decl] : [],
           });
         }
       }
@@ -10420,17 +10457,94 @@ export class Lowerer {
         ),
       );
     };
-    const recorded = journalMode() === "serial" ? waveStats() : null;
-    const host = recorded === null ? null : this.waveHost(loweredUnits, lowerUnitBody);
+    // With a unit store, every unit is recorded as in the serial mode, and
+    // a unit applies the record an earlier build stored for it where that
+    // record still holds (unit-reuse.ts).
+    const reuse =
+      unitStore === null
+        ? null
+        : UnitReuse.open(
+            unitStore,
+            this.program,
+            parts.map((fp) => fp.sf),
+            {
+              facts: (declaration) => this.declarationFacts(declaration),
+              exportsOf: (specifier) => {
+                const symbol = this.checker.getSymbolAtLocation(specifier);
+                if (!symbol) return null;
+                return this.checker
+                  .getExportsOfModule(symbol)
+                  .map((exported) => ts.symbolName(exported))
+                  .sort()
+                  .join("\n");
+              },
+              isLocal: (identifier, container) => {
+                const declarations = this.checker.getSymbolAtLocation(identifier)?.declarations;
+                if (declarations === undefined || declarations.length === 0) return false;
+                const sf = ts.getSourceFileOfNode(container);
+                return declarations.every(
+                  (declaration) =>
+                    ts.getSourceFileOfNode(declaration) === sf &&
+                    declaration.pos >= container.pos &&
+                    declaration.end <= container.end,
+                );
+              },
+            },
+          );
+    const recorded =
+      journalMode() === "serial" || (reuse !== null && reuse.records) ? waveStats() : null;
+    const host =
+      recorded === null
+        ? null
+        : this.waveHost(loweredUnits, lowerUnitBody, (name) => {
+            const priority = metadataPriority.get(name)!;
+            return { owner: demandOwner(priority), priority };
+          });
     const dump = recorded === null ? null : journalDump();
+    const fileOfUnit = (name: string): string | null => {
+      const source = units.get(name)?.source;
+      return source === undefined ? null : ts.getSourceFileOfNode(source).fileName;
+    };
+    const waveReuse: WaveReuse | null =
+      reuse === null || !reuse.records
+        ? null
+        : {
+            verify: unitReuseVerify(),
+            stored: (name) => {
+              // A unit without a declared rank takes the next expression
+              // rank when it lowers, which applying a record would not
+              // advance.
+              const unit = units.get(name);
+              const file = fileOfUnit(name);
+              if (unit === undefined || file === null || !metadataPriority.has(name)) return null;
+              return reuse.candidate(name, file, unit.source ?? null, unit.owners ?? []);
+            },
+            check: (name, stored, pending, unit) =>
+              verifyStoredUnit(name, stored, pending, unit.record, unit.reasons),
+            note: (name, record, applied, files) => {
+              const file = fileOfUnit(name);
+              if (file !== null) reuse.note(name, file, record, applied, files);
+            },
+          };
     const recordLines: string[] = [];
     const drainUnits = (): void => {
+      // The waves of one drain have only checker prefetches between them, so
+      // they share the content their units start from (HeldTables).
+      const held =
+        host !== null && recorded !== null ? new HeldTables(host.tables, recorded) : null;
       while (queue.length > 0) {
         const wave = queue.splice(0);
         shuffle?.(wave);
         this.checker.prefetchRoots(wave.flatMap((name) => units.get(name)!.roots));
         if (host !== null && recorded !== null) {
-          lowerWaveRecorded(host, wave, recorded, dump === null ? null : recordLines);
+          lowerWaveRecorded(
+            host,
+            wave,
+            recorded,
+            dump === null ? null : recordLines,
+            waveReuse,
+            held,
+          );
           continue;
         }
         for (const name of wave) {
@@ -10447,6 +10561,7 @@ export class Lowerer {
           }
         }
       }
+      held?.check();
     };
     drainUnits();
     this.restoreGenericInstanceOrder();
@@ -10491,6 +10606,13 @@ export class Lowerer {
     }
     classDispatch.finalize(this);
     if (dump !== null) writeRecords(dump, recordLines);
+    if (reuse !== null) {
+      reuse.finish();
+      if (process.env["SCRIPTC_TIMING"] === "1")
+        process.stderr.write(
+          `scriptc lowering ${JSON.stringify({ phase: "unit-reuse", ...reuse.stats })}\n`,
+        );
+    }
     if (recorded !== null && process.env["SCRIPTC_TIMING"] === "1")
       process.stderr.write(
         `scriptc lowering ${JSON.stringify({ phase: "unit-records", ...recorded })}\n`,
@@ -10539,11 +10661,57 @@ export class Lowerer {
     return { reachable, result: this.finishModule(functions) };
   }
 
+  /** What the steps before the worklist settled for a top-level
+   * declaration, as text without source positions (unit-reuse.ts): a
+   * function's signature, a class's layout and the signatures of its
+   * methods and statics, and the globals of a variable statement. */
+  private declarationFacts(declaration: ts.Node): string {
+    const positionFree = (key: string, value: unknown): unknown =>
+      key === "loc" || key === "scope" ? undefined : value;
+    if (ts.isFunctionDeclaration(declaration)) {
+      const symbol = declSymbolOf(this, declaration);
+      const sig = symbol ? this.fnSigsBySymbol.get(symbol) : undefined;
+      return sig === undefined ? "" : JSON.stringify(sig, positionFree);
+    }
+    if (ts.isClassDeclaration(declaration)) {
+      const info = this.classes.get(this.classNamer(declaration));
+      if (info === undefined) return "";
+      const staticMethods: { name: string; params: ParamShape[]; ret: IrType }[] = [];
+      if (info.staticMethods)
+        for (const [name, method] of info.staticMethods)
+          staticMethods.push({ name, params: method.params, ret: method.ret });
+      return JSON.stringify(
+        {
+          def: info.def,
+          fields: [...info.fields],
+          methods: [...info.methods],
+          statics: info.staticFields.map((field) => ({
+            name: field.name,
+            type: field.type,
+            runtimeOptional: field.runtimeOptional ?? false,
+            globalId: field.globalId,
+            readonly: field.readonly,
+          })),
+          staticMethods,
+        },
+        positionFree,
+      );
+    }
+    if (ts.isVariableStatement(declaration)) {
+      const globals: (IrGlobal | null)[] = [];
+      for (const decl of declaration.declarationList.declarations.nodes)
+        globals.push(this.globalsByDeclNode.get(decl) ?? null);
+      return JSON.stringify(globals, positionFree);
+    }
+    return "";
+  }
+
   /** The lowerer's side of a recorded wave (unit-journal.ts).
    * `lowerUnitBody` lowers a unit as reachable emit does. */
   private waveHost(
     loweredUnits: Map<string, IrFunction>,
     lowerUnitBody: (name: string) => IrFunction | null,
+    ownerOf: (name: string) => { owner: GenericDemandOwner; priority: readonly [number, number] },
   ): WaveHost {
     const scalars = this.journalScalars();
     const flags = new Map(scalars.map((scalar) => [scalar.name, scalar]));
@@ -10572,6 +10740,35 @@ export class Lowerer {
         return sf.file.node(event.index);
       } catch {
         return undefined;
+      }
+    };
+    // Makes a recorded call again (resolves has answered true for it).
+    const replay = (event: JournalEvent): void => {
+      switch (event.kind) {
+        case "edge":
+          this.noteEdge(event.name);
+          break;
+        case "superConstructorEdge":
+          this.noteSuperConstructorEdge(event.name);
+          break;
+        case "virtualEdge":
+          this.noteVirtualEdge(classNamed(event.name)!, event.detail!);
+          break;
+        case "functionDemand":
+          this.noteGenericInstanceDemand(instanceNamed(event.name)!);
+          break;
+        case "classDemand":
+          this.noteGenericClassInstanceDemand(classNamed(event.name)!);
+          break;
+        case "statement":
+          this.countStatement(statementNode(event)!, event.detail ?? undefined);
+          break;
+        case "failedStatement":
+          this.countStatementFailed(statementNode(event)!, event.detail ?? undefined);
+          break;
+        case "flag":
+          flags.get(event.name)!.set!();
+          break;
       }
     };
     return {
@@ -10613,6 +10810,15 @@ export class Lowerer {
           default:
             return true;
         }
+      },
+      keep: (name, fn, events) => {
+        if (fn) loweredUnits.set(name, fn);
+        const { owner, priority } = ownerOf(name);
+        this.withGenericDemandOwner(owner, () =>
+          this.shapes.withDeclaredOrderPriority(priority, () => {
+            for (const event of events) replay(event);
+          }),
+        );
       },
     };
   }
@@ -11958,7 +12164,26 @@ export class Lowerer {
       if (dyn) return dyn;
       this.badType(node, t);
     }
+    // A JavaScript binding whose inferred type holds a union of functions
+    // and arrays (a test table of `[fn, cases]` rows, or one row
+    // destructured): the checked-dynamic kind dynFallbackType gives the
+    // unmappable spellings of such tables, so the rows keep their functions'
+    // names and the destructured items their values.
+    if (isJsSourceFile(ts.getSourceFileOfNode(node)) && this.mixesFunctionsWithArrays(mapped))
+      return DYN;
     return jsOpenObjectType(node, mapped, this.shapes, this.unions);
+  }
+
+  /** Whether `type`, or an array element type inside it, is a union with
+   * both a function arm and an array arm. */
+  private mixesFunctionsWithArrays(type: IrType): boolean {
+    if (type.kind === "array") return this.mixesFunctionsWithArrays(type.elem);
+    if (type.kind !== "union") return false;
+    const arms = this.unions.get(type.unionId)?.arms ?? [];
+    return (
+      (arms.some((arm) => arm.kind === "func") && arms.some((arm) => arm.kind === "array")) ||
+      arms.some((arm) => arm.kind === "array" && this.mixesFunctionsWithArrays(arm))
+    );
   }
 
   /** Exact-shape enforcement (SC2002). Records are monomorphic structs, so
@@ -12373,6 +12598,30 @@ export class Lowerer {
         );
         if (boxed) return boxed;
       }
+      // A node:path family is its module object (pathModuleValue), the
+      // bare module the target platform's family.
+      if (
+        expr.type.kind === "moduleNs" &&
+        (expr.type.moduleId === "builtin:path" ||
+          expr.type.moduleId === "builtin:path/posix" ||
+          expr.type.moduleId === "builtin:path/win32")
+      ) {
+        const family =
+          expr.type.moduleId !== "builtin:path"
+            ? expr.type.moduleId.slice("builtin:".length)
+            : builtinModuleConstOf(this, "path", "sep") === "\\"
+              ? "path/win32"
+              : "path/posix";
+        const value = pathModuleValue(this, family, expr.loc);
+        if (expr.kind === "moduleNsRef") return value;
+        return {
+          kind: "seqExpr",
+          stmts: [{ kind: "exprStmt", expr, loc: expr.loc }],
+          result: value,
+          type: DYN,
+          loc: expr.loc,
+        };
+      }
       if (
         expr.type.kind === "moduleNs" &&
         expr.type.moduleId === "builtin:events" &&
@@ -12418,7 +12667,7 @@ export class Lowerer {
             (this.unions.get(expr.type.unionId)?.arms.some(liveReference) ?? false));
         return {
           kind: "dynFrom",
-          value: expr,
+          value: this.checkedBuiltinValue(expr),
           type: DYN,
           loc: expr.loc,
           ...(liveRef ? { liveRef: true as const } : {}),
@@ -15624,6 +15873,18 @@ export class Lowerer {
     node: ts.Node,
     fallback: string,
   ): never {
+    // A `.js` WRITE to a name nothing declares. Sloppy mode resolves it by
+    // creating a property on the global object — process-wide state a native
+    // binary has no object for, so those programs run in a Node island
+    // (plan D-5). Until the write is routed there it is refused by name
+    // rather than by the generic no-lowering text.
+    if (symbol === null && isJsWriteTarget7(node) && isJsSourceFile(ts.getSourceFileOfNode(node))) {
+      this.unsupported(
+        "SC1091",
+        node,
+        `writing the undeclared name '${name}' in a JavaScript source`,
+      );
+    }
     if (this.isBlockedBinding(symbol)) {
       this.pushDiag(blockedBindingUseDiag(name, locOf(node)));
       throw new PoisonError();
@@ -17003,6 +17264,7 @@ export class Lowerer {
   lowerNativeCallableValue(fn: BuiltinModuleFn, display: string, loc: SrcLoc): IrExpr | null {
     const valueParams = fn.valueParams;
     if (!valueParams) return null;
+    if (fn.checked?.only) return checkedNativeCallableValue(this, fn, display, loc);
     const shapes: ParamShape[] = valueParams.map((param): ParamShape => {
       if (param.mode === "rest") return { mode: "rest", type: arrayOf(param.type) };
       if (param.mode === "optional") {
@@ -17115,7 +17377,22 @@ export class Lowerer {
         loc,
       });
     }
+    if (valueParams.some((param) => param.name !== undefined)) {
+      this.builtinCheckedValues.set(fnName, { fn, display, loc });
+    }
     return { kind: "closure", fnName, captures: [], type: funcType, loc };
+  }
+
+  /** A builtin function value about to become untyped: its checked twin
+   * when the builtin names its parameters (checkedNativeCallableValue), so
+   * untyped callers meet Node's argument validation. Typed slots keep the
+   * typed adapter. */
+  checkedBuiltinValue(expr: IrExpr): IrExpr {
+    const checked =
+      expr.kind === "closure" ? this.builtinCheckedValues.get(expr.fnName) : undefined;
+    return checked
+      ? checkedNativeCallableValue(this, checked.fn, checked.display, checked.loc)
+      : expr;
   }
 
   /** The name and length a builtin function's adapter boxes under: the ones

@@ -66,6 +66,7 @@ const features = {
   dgramDyn: false,
   textCodecDyn: false,
   watch: false,
+  watchFile: false,
   foreignFfi: false,
   nodeTest: false,
   tls: false,

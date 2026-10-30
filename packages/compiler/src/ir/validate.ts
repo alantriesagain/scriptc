@@ -4192,11 +4192,15 @@ function validateFunction(
     // error.nodeThrow takes an optional fourth argument: the error's own
     // `url` property (a string).
     const optionalUrl = e.fn === "error.nodeThrow" && e.args.length === 4;
-    if (
-      variadic
-        ? e.args.length < sig.argTypes.length
-        : e.args.length !== sig.argTypes.length && !optionalUrl
-    ) {
+    // fs.unwatchFile's listener is optional, so its last slot may be
+    // omitted (1 or 2 args) rather than extended.
+    const optionalTail = e.fn === "fs.unwatchFile" ? 1 : 0;
+    const arityOk = variadic
+      ? e.args.length >= sig.argTypes.length
+      : e.args.length === sig.argTypes.length ||
+        optionalUrl ||
+        (optionalTail > 0 && e.args.length === sig.argTypes.length - optionalTail);
+    if (!arityOk) {
       err(`libCall ${e.fn}: ${e.args.length} args, expected ${sig.argTypes.length}`, e.loc);
     }
     if (optionalUrl) expectType(e.args[3]!, STRING, `libCall ${e.fn} arg 3`);
