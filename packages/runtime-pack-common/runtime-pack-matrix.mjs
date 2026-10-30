@@ -284,19 +284,6 @@ export function variantsFor(source) {
         defines: [...defines, "SCR_RECORD_VIEW_PARTIAL"],
       });
     }
-    // A program that passes a property descriptor built by an expression to
-    // defineProperty, defineProperties or Object.create links the build whose
-    // ToPropertyDescriptor accepts any object and reads its fields through
-    // [[HasProperty]]/[[Get]]; every other program keeps the default object,
-    // byte for byte. As above, each existing build needs its counterpart.
-    for (const { id, when, defines } of variants.slice()) {
-      const suffix = id === "default" ? "" : `-${id}`;
-      variants.push({
-        id: `descriptor-shapes${suffix}`,
-        when: { ...when, descriptorShapes: true },
-        defines: [...defines, "SCR_DESCRIPTOR_SHAPES"],
-      });
-    }
   }
   // util.inspect and instanceof of Node island handles; Node's report for
   // an uncaught island error.

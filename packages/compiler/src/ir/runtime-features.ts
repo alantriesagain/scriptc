@@ -1363,14 +1363,6 @@ const RUNTIME_FEATURE_RULES = {
   recordViewPartial: rule({
     expr: (node) => node.kind === "dynCheck" && node.partialView === true,
   }),
-  /** A property descriptor that is not statically a plain object reaches
-   * Object.defineProperty, Object.defineProperties or Object.create: it may
-   * be an array, a function or an object with inherited fields, which needs
-   * the SCR_DESCRIPTOR_SHAPES build of scr_json.c (lowering emits
-   * dyn.definePropertyShapes and its siblings). */
-  descriptorShapes: rule({
-    fns: ["dyn.definePropertyShapes", "dyn.definePropsShapes", "dyn.objCreateWithPropertiesShapes"],
-  }),
   /** Module namespace objects as checked-dynamic values
    * (scr_module_namespace.c). */
   moduleNamespace: rule({ fns: ["module.namespaceValue"] }),
@@ -1531,7 +1523,6 @@ function noRuntimeFeatures(): RuntimeFeatures {
     utilPromisify: false,
     warningReplace: false,
     recordViewPartial: false,
-    descriptorShapes: false,
     wasm: false,
     webcrypto: false,
     zlib: false,

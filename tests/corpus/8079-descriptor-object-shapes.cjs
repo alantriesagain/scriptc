@@ -50,6 +50,45 @@ for (const primitive of [null, 1, "s", true]) {
   }
 }
 
+// A DataView or a typed array answers the named properties it owns. A typed
+// array also inherits %TypedArray%.prototype.set, so with an own `value` it
+// is both an accessor and a data descriptor and throws.
+function untyped(value) {
+  return value;
+}
+const field = (value) => ({ value, writable: true, enumerable: true, configurable: true });
+const viewDesc = untyped(new DataView(new ArrayBuffer(4)));
+Object.defineProperty(viewDesc, "value", field(5));
+Object.defineProperty(viewDesc, "enumerable", field(true));
+Object.defineProperty(target, "fromDataView", viewDesc);
+const viewInfo = Object.getOwnPropertyDescriptor(target, "fromDataView");
+console.log(viewInfo.value, viewInfo.writable, viewInfo.enumerable, viewInfo.configurable);
+// A literal descriptor map holding such descriptors.
+const viewCreated = Object.create({}, { a: viewDesc, b: arrayDesc });
+console.log(viewCreated.a, viewCreated.b, Object.keys(viewCreated));
+const viewDefined = {};
+Object.defineProperties(viewDefined, { c: viewDesc, d: inherited });
+console.log(viewDefined.c, viewDefined.d, Object.keys(viewDefined));
+
+const bytesDesc = untyped(new Uint8Array(2));
+Object.defineProperty(bytesDesc, "value", field(9));
+try {
+  Object.defineProperty(target, "fromBytes", bytesDesc);
+} catch (error) {
+  console.log("fromBytes", error.name);
+}
+
+// A class instance answers its own fields.
+class FieldDesc {
+  constructor() {
+    this.value = 13;
+    this.enumerable = true;
+  }
+}
+Object.defineProperty(target, "fromClass", untyped(new FieldDesc()));
+const classInfo = Object.getOwnPropertyDescriptor(target, "fromClass");
+console.log(classInfo.value, classInfo.writable, classInfo.enumerable, classInfo.configurable);
+
 const arrayInfo = Object.getOwnPropertyDescriptor(target, "fromArray");
 console.log(arrayInfo.value, arrayInfo.writable, arrayInfo.enumerable, arrayInfo.configurable);
 const inheritedInfo = Object.getOwnPropertyDescriptor(target, "inherited");

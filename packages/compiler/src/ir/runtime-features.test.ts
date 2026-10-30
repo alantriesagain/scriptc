@@ -179,11 +179,7 @@ describe("runtime feature snapshots", () => {
     expect(moduleRuntimeFeatures(mod).dynAsync).toBe(false);
   });
 
-  test("asks for the object-shaped descriptor build only for an expression descriptor", () => {
-    const literal = module();
-    literal.functions[0]!.body.push(call("dyn.defineProperty"));
-    expect(moduleRuntimeFeatures(literal).descriptorShapes).toBe(false);
-
+  test("the any-object descriptor entry points link the dyn-invoke unit", () => {
     for (const fn of [
       "dyn.definePropertyShapes",
       "dyn.definePropsShapes",
@@ -191,8 +187,6 @@ describe("runtime feature snapshots", () => {
     ] as const) {
       const mod = module();
       mod.functions[0]!.body.push(call(fn));
-      expect(moduleRuntimeFeatures(mod).descriptorShapes).toBe(true);
-      // The shape variants run the dyn-invoke unit's entry points.
       expect(moduleRuntimeFeatures(mod).dynInvoke).toBe(true);
     }
   });

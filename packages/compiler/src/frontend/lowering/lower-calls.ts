@@ -77,6 +77,7 @@ import {
   type IrLibFn,
   type IrLocal,
   type IrParam,
+  type IrRecordShape,
   type IrStmt,
   type IrType,
   NULL_T,
@@ -8109,16 +8110,42 @@ function isDynEntryPairsType(lowerer: Lowerer, t: IrType): boolean {
 /** True when the expression is statically a PLAIN OBJECT at runtime: a dyn
  *  object literal, or a record (a literal, a clone, or any expression of a
  *  record type, which dynFrom boxes field by field). Both build an ordinary
- *  object whose fields are own data properties, which the default runtime
+ *  object whose fields are own data properties, which the plain-object
  *  descriptor reader answers exactly. Every other expression (a variable of
  *  any other type, a call, an array, a function) may be an object of any
- *  kind with inherited fields, so it asks for the SCR_DESCRIPTOR_SHAPES
- *  build that implements ToPropertyDescriptor over every object kind. */
+ *  kind with inherited fields, so it takes the entry points whose
+ *  ToPropertyDescriptor reads every object kind (dyn.definePropertyShapes
+ *  and its siblings). */
 export function isPlainObjectLiteral(expr: IrExpr): boolean {
   if (expr.kind === "dynObjLit") return true;
   if (expr.kind !== "dynFrom") return false;
   const value = expr.value;
   return value.kind === "dynObjLit" || value.type.kind === "record";
+}
+
+/** True when the expression is a plain property-descriptor map for
+ *  Object.defineProperties or Object.create: a plain object
+ *  (isPlainObjectLiteral) whose every field is a plain object too. A dyn
+ *  literal's field values are checked with isPlainObjectLiteral and a
+ *  record's fields by their types, since dynFrom boxes a record-typed field
+ *  into an ordinary object. A map with any other field (`{ a: view }`, where
+ *  `view` is a DataView or an array) takes the any-object entry points. */
+export function isPlainDescriptorMap(
+  expr: IrExpr,
+  getRecord: (shapeId: string) => IrRecordShape | undefined,
+): boolean {
+  if (!isPlainObjectLiteral(expr)) return false;
+  const literal = expr.kind === "dynFrom" ? expr.value : expr;
+  if (literal.kind === "dynObjLit")
+    return (literal.fields ?? []).every((field) => isPlainObjectLiteral(field.value));
+  if (literal.type.kind !== "record") return false;
+  const shape = getRecord(literal.type.shapeId);
+  return (
+    shape !== undefined &&
+    !shape.tuple &&
+    shape.indexValue === undefined &&
+    shape.fields.every((field) => field.type.kind === "record")
+  );
 }
 
 function lowerObjectStaticCall(
@@ -8483,9 +8510,10 @@ function lowerObjectStaticCall(
       if (descriptors.type.kind === "dyn")
         return {
           kind: "libCall",
-          // A descriptor map built by an expression may be an array, a
-          // function or an object with inherited fields (SCR_DESCRIPTOR_SHAPES).
-          fn: isPlainObjectLiteral(descriptors)
+          // A descriptor map built by an expression, or a literal map with a
+          // descriptor built by one, may hold an array, a function or an
+          // object with inherited fields.
+          fn: isPlainDescriptorMap(descriptors, (id) => lowerer.shapes.get(id))
             ? "dyn.objCreateWithProperties"
             : "dyn.objCreateWithPropertiesShapes",
           args: [proto, descriptors],
@@ -8891,8 +8919,8 @@ function lowerObjectStaticCall(
     return {
       kind: "libCall",
       // A descriptor built by an expression may be an array, a function or an
-      // object with inherited fields, which the runtime answers only in its
-      // SCR_DESCRIPTOR_SHAPES build; a plain object literal keeps the default.
+      // object with inherited fields, which only the any-object entry point
+      // reads; a plain object literal keeps the plain-object reader.
       fn: isPlainObjectLiteral(descriptor) ? "dyn.defineProperty" : "dyn.definePropertyShapes",
       args: [target, key, descriptor],
       type: DYN,
@@ -8958,9 +8986,12 @@ function lowerObjectStaticCall(
       if (descs.type.kind === "dyn") {
         return {
           kind: "libCall",
-          // As for Object.defineProperty above: a descriptor map built by an
-          // expression asks for the SCR_DESCRIPTOR_SHAPES build.
-          fn: isPlainObjectLiteral(descs) ? "dyn.defineProps" : "dyn.definePropsShapes",
+          // As for Object.create above: a descriptor map built by an
+          // expression, or a literal map with a descriptor built by one, takes
+          // the any-object entry point.
+          fn: isPlainDescriptorMap(descs, (id) => lowerer.shapes.get(id))
+            ? "dyn.defineProps"
+            : "dyn.definePropsShapes",
           args: [target, descs],
           type: DYN,
           loc: locOf(call),

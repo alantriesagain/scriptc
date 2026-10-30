@@ -791,8 +791,8 @@ export const MAY_THROW_LIB_FNS: ReadonlySet<IrLibFn> = new Set([
   "dyn.bagGet",
   "dyn.bagSet",
   "dyn.defineProperty",
-  // The same entry points for a descriptor built by an expression; they run
-  // the same ToPropertyDescriptor, so they throw the same TypeErrors.
+  // The same operations for a descriptor built by an expression; they throw
+  // the same TypeErrors, and a getter on the descriptor can throw.
   "dyn.definePropsShapes",
   "dyn.definePropertyShapes",
   "dyn.objCreateWithPropertiesShapes",
