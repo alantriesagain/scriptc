@@ -1047,8 +1047,17 @@ export function lowerFieldCompoundValue(
       const rawRhs: IrExpr = rhsNode
         ? lowerer.lowerExpr(rhsNode)
         : { kind: "numLit", value: 1, type: F64, loc };
+      // A `null`/`undefined` literal right side has no value of its own to
+      // hold in the temporary. In a JavaScript source `+` is the abstract
+      // operation (ToNumber for arithmetic, ToString for a string left
+      // operand — `s += null` appends "null"), so the unit crosses as the
+      // dynamic null rather than as the number it would convert to.
       const rhs = save(
-        rawRhs.kind === "unitLit" ? lowerOperatorNumber(lowerer, rawRhs, loc) : rawRhs,
+        rawRhs.kind === "unitLit"
+          ? isJsSourceFile(ts.getSourceFileOfNode(access))
+            ? lowerer.coerceToExpected(rawRhs, DYN)
+            : lowerOperatorNumber(lowerer, rawRhs, loc)
+          : rawRhs,
         "%compoundRhs",
       );
       if (isJsSourceFile(ts.getSourceFileOfNode(access)) && lowerer.dynConvertible(rhs.type)) {
@@ -1146,8 +1155,21 @@ export function lowerFieldCompoundValue(
   const rawRhs: IrExpr = rhsNode
     ? lowerer.lowerExpr(rhsNode)
     : { kind: "numLit", value: 1, type: F64, loc };
+  // `s += null` on a STRING field appends "null": the abstract `+` converts
+  // the unit to its primitive and, with a string left operand, to a string.
+  // The unit has no value of its own to hold in the temporary, so it crosses
+  // as the dynamic null; every other compound operation converts it to a
+  // number (`n += null` adds 0).
+  const unitConcat =
+    rawRhs.kind === "unitLit" &&
+    read.type.kind === "string" &&
+    isJsSourceFile(ts.getSourceFileOfNode(access));
   const rhs = save(
-    rawRhs.kind === "unitLit" ? lowerOperatorNumber(lowerer, rawRhs, loc) : rawRhs,
+    rawRhs.kind === "unitLit"
+      ? unitConcat
+        ? lowerer.coerceToExpected(rawRhs, DYN)
+        : lowerOperatorNumber(lowerer, rawRhs, loc)
+      : rawRhs,
     "%compoundRhs",
   );
   const numericRhs: IrExpr =

@@ -22,3 +22,25 @@ var o = { v: 1 };
 o.v += null;
 o.v *= undefined;
 console.log(o.v);
+
+// A STRING field appends the words: the abstract `+` converts the unit to
+// its primitive and, with a string left operand, to a string. A field the
+// compiler stores as a number keeps the numeric rule (`n += null` adds 0),
+// and an untyped object member decides at runtime.
+var s = "a";
+s += null;
+s += undefined;
+console.log(s === "anullundefined", s);
+class Box {
+  constructor() {
+    this.text = "t";
+    this.count = 1;
+  }
+  bump() {
+    this.text += null;
+    this.count += null;
+  }
+}
+var box = new Box();
+box.bump();
+console.log(box.text, box.count);
