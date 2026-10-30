@@ -1290,12 +1290,35 @@ function lowerAssertEqual(
           ?.arms.every((arm) => instanceType(arm) || isUnitType(arm)) ??
           false))) &&
     lowerer.dynConvertible(e.type);
+  // A union under the strict pair, against a side that holds only
+  // primitives, null or undefined: both sides cross into the checked-dynamic
+  // tree. A composite arm crosses as a copy, which is honest here because
+  // no primitive is SameValue to an object; its failure message renders the
+  // copy as Node renders the value.
+  const primitive = (t: IrType): boolean =>
+    t.kind === "f64" ||
+    t.kind === "string" ||
+    t.kind === "bool" ||
+    t.kind === "bigint" ||
+    isUnitType(t) ||
+    (t.kind === "union" && (lowerer.unions.get(t.unionId)?.arms.every(primitive) ?? false));
+  const unionAgainstPrimitive =
+    !deep &&
+    (a.type.kind === "union" || b.type.kind === "union") &&
+    (primitive(a.type) || primitive(b.type));
+  const convertibleArms = (t: IrType): boolean =>
+    t.kind === "union" &&
+    lowerer.dynConvertible(t) &&
+    !typeReachesCycle(lowerer, t) &&
+    !typeReachesFunction(lowerer, t) &&
+    (lowerer.unions.get(t.unionId)?.arms.every((arm) => arm.kind !== "bytes") ?? false);
   if (
     a.type.kind === "dyn" ||
     b.type.kind === "dyn" ||
     a.type.kind === "moduleNs" ||
     b.type.kind === "moduleNs" ||
-    (instance(a) && instance(b))
+    (instance(a) && instance(b)) ||
+    unionAgainstPrimitive
   ) {
     const box = (e: IrExpr, node: ts.Expression): IrExpr => {
       if (e.type.kind === "dyn") return e;
@@ -1308,6 +1331,7 @@ function lowerAssertEqual(
       const k = e.type.kind;
       const ok =
         e.kind === "unitLit" ||
+        (unionAgainstPrimitive && convertibleArms(e.type)) ||
         k === "f64" ||
         k === "string" ||
         k === "bool" ||

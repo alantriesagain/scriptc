@@ -5147,7 +5147,7 @@ function validateFunction(
       }
       return true;
     }
-    if (e.fn === "qs.parse") {
+    if (e.fn === "qs.parse" || e.fn === "qs.parseCustom") {
       // Result: a pure index-signature record whose value union
       // carries a string arm and a string[] arm (undefined tolerated
       // — @types/node's Dict — and f64 too: the header-family
