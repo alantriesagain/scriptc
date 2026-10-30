@@ -161,6 +161,7 @@ import {
   captureShapeOverlayState,
   type ShapeOverlayLoadState,
 } from "./shape-inference/index.js";
+import { jsInferenceEnabled } from "./js-inference.js";
 import { inferredJsDiagnosticSuppressed } from "./inferred-js-diagnostics.js";
 import {
   containsJsx,
@@ -1401,7 +1402,10 @@ export function loadProgram(
       externalTypes,
       npmStaticPackages.length > 0,
       projector,
-      npmStaticPackages.length > 0 && shapeOverlayEnabled() ? shapeOverlayer : undefined,
+      (npmStaticPackages.length > 0 && shapeOverlayEnabled()) ||
+        (jsInferenceEnabled() && process.env["SCRIPTC_SHAPE_OVERLAY"] !== "0")
+        ? shapeOverlayer
+        : undefined,
     );
     // Shape inference, stage S1: a report only (SCRIPTC_DEBUG_SHAPES).
     const shapes = process.env["SCRIPTC_DEBUG_SHAPES"];

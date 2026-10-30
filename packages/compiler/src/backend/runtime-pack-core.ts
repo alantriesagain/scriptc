@@ -109,6 +109,7 @@ export interface RuntimeFeatureSet extends NativeLinkFeatures {
   builtinValues: boolean;
   computedRequire: boolean;
   warningReplace: boolean;
+  recordViewPartial: boolean;
   stdioExtended: boolean;
   /** The program's write completion callbacks take the error argument:
    * the SCR_STREAM_WRITE_ERRORS build of the stream unit. */
@@ -331,6 +332,7 @@ export function effectiveRuntimeFeatures(
     builtinValues: features.builtinValues === true,
     computedRequire: features.computedRequire === true,
     warningReplace: features.warningReplace === true,
+    recordViewPartial: features.recordViewPartial === true,
     stdioExtended: features.stdioExtended === true,
     streamWriteErrors: features.streamWriteErrors === true,
     stdioWriteSlot: features.stdioWriteSlot === true,

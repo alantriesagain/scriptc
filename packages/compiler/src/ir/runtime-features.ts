@@ -1249,6 +1249,12 @@ const RUNTIME_FEATURE_RULES = {
   utilPromisify: rule({ fns: ["util.promisifyDyn"] }),
   /** process.emitWarning is assigned (process.setEmitWarning). */
   warningReplace: rule({ fns: ["process.setEmitWarning"] }),
+  /** A record literal asserted to a wider record type answers a partial
+   * record view (record-views.ts): the SIZE_MAX sentinel and its trap live in
+   * the SCR_RECORD_VIEW_PARTIAL build of scr_json.c. */
+  recordViewPartial: rule({
+    expr: (node) => node.kind === "dynCheck" && node.partialView === true,
+  }),
   /** Module namespace objects as checked-dynamic values
    * (scr_module_namespace.c). */
   moduleNamespace: rule({ fns: ["module.namespaceValue"] }),
@@ -1377,6 +1383,7 @@ function noRuntimeFeatures(): RuntimeFeatures {
     tlsCa: false,
     utilPromisify: false,
     warningReplace: false,
+    recordViewPartial: false,
     wasm: false,
     webcrypto: false,
     zlib: false,
@@ -1468,6 +1475,13 @@ function scanRuntimeFeatures(
     const sites = new JsIcSites(mod);
     features.dynTier = mod.functions.some((fn) => fn.tier === "dynamic" && hasJsIcSite(fn, sites));
   }
+  // A jsval parameter or result (ir/jsval.ts) is retained and released
+  // through the tier's word reference counting, with or without a js.*
+  // operation in the body.
+  if (!features.dynTier)
+    features.dynTier = mod.functions.some(
+      (fn) => fn.returnType.kind === "jsval" || fn.params.some((p) => p.type.kind === "jsval"),
+    );
   return features;
 }
 

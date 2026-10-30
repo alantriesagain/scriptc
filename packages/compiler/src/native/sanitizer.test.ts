@@ -31,6 +31,7 @@ const features = {
   builtinValues: false,
   computedRequire: false,
   warningReplace: false,
+  recordViewPartial: false,
   stdioExtended: false,
   streamWriteErrors: false,
   stdioWriteSlot: false,

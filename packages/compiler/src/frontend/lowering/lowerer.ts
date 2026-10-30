@@ -780,6 +780,7 @@ import type { ExpandoMembers } from "./lower-expando.js";
 import { lowerRecordFieldCall, lowerObjectMethodCall } from "./lower-calls.js";
 import { fenceCrossBlockNsRef, nsPathPrefix } from "./lower-namespaces.js";
 import { isSafeToRepeat } from "./expressions/evaluation-safety.js";
+import { partialAssertionFields } from "./partial-assertions.js";
 import { lowerTernary } from "./lower-exprs.js";
 import {
   maybePromiseReturnStmt,
@@ -3352,6 +3353,10 @@ export class Lowerer {
   /** The collection types that uses prove for untyped JavaScript bindings,
    * by every identifier naming one (js-collection-types.ts). */
   inferredCollectionTypes: Map<ts.Node, ts.Type> | undefined = undefined;
+  /** Partial record assertions (`partial-assertions.ts`): per target shape,
+   * the required fields some asserted literal leaves unwritten. */
+  partialAssertions: Map<string, { missing: ReadonlySet<string>; text: string }> | undefined =
+    undefined;
   /** overload-choice's answers per call, binding and function. */
   readonly dynamicOverloadAnswers = new Map<ts.Node, boolean>();
   /** Error parameters of an error-first callback with a known value in
@@ -4510,6 +4515,7 @@ export class Lowerer {
     "priorRetriedSymbols",
     "wholeSlotDegradation",
     "inferredCollectionTypes",
+    "partialAssertions",
     "foreignElementKeys",
     // caches made when first needed
     "nanCodedReads",
@@ -14516,6 +14522,10 @@ export class Lowerer {
    * undefined-armed union fields, which can be absent, and `true` for
    * every other declared field. */
   recordFieldPresent(obj: IrExpr, shapeId: string, field: string, loc: SrcLoc): IrExpr {
+    // A partial record view (partial-assertions.ts) can lack a field its
+    // asserted literal never wrote, whatever the field's required type.
+    if (partialAssertionFields(this, shapeId).has(field))
+      return { kind: "recordHas", obj, shapeId, field, type: BOOL, loc };
     const f = this.shapes.get(shapeId)?.fields.find((x) => x.name === field);
     if (f && f.type.kind === "union" && this.armTag(f.type.unionId, UNDEFINED_T) >= 0) {
       return { kind: "recordHas", obj, shapeId, field, type: BOOL, loc };
