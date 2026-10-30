@@ -1903,6 +1903,42 @@ function importMetaProperty(lowerer: Lowerer, expr: ts.PropertyAccessExpression)
 export const DEFERRED_READ_MESSAGE =
   "undefined is not representable in the target union (a value narrowed or asserted past it still held it)";
 
+/** A collection method read as a VALUE (`s.add`, `m.has` — the `f.call(x)`
+ * tests and callback plumbing): the runtime's interned prototype function
+ * for that name, which applies the method to its own receiver and throws
+ * Node's brand-check TypeError when that receiver is not a collection of
+ * the right kind. Only JavaScript sources take this path: a typed source
+ * keeps its refusal (the checker's Set/Map signature has no value form).
+ * The receiver expression still runs for its effects. */
+function dynCollectionMethodValue(
+  lowerer: Lowerer,
+  expr: ts.PropertyAccessExpression,
+  prototype: "Map" | "Set",
+  name: string,
+): IrExpr {
+  const loc = locOf(expr);
+  const method: IrExpr = {
+    kind: "libCall",
+    fn: "dyn.builtinMethod",
+    args: [
+      { kind: "strLit", value: prototype, type: STRING, loc },
+      { kind: "strLit", value: name, type: STRING, loc: locOf(expr.name) },
+    ],
+    type: DYN,
+    loc,
+  };
+  const receiver = lowerer.lowerExpr(expr.expression);
+  return isSafeToDiscard(receiver)
+    ? method
+    : {
+        kind: "seqExpr",
+        stmts: [{ kind: "exprStmt", expr: receiver, loc: locOf(expr.expression) }],
+        result: method,
+        type: DYN,
+        loc,
+      };
+}
+
 /** Property access on a string or array receiver: `.length` lowers to the
  * matching intrinsic; a bare method reference (`const f = s.slice` — a
  * function value) is rejected with a specific message. Returns null for
@@ -2629,6 +2665,8 @@ export function lowerIntrinsicProperty(
       };
     }
     if (MAP_METHODS.has(name) || name === "forEach") {
+      if (isJsSourceFile(ts.getSourceFileOfNode(expr)) && !expr.questionDotToken)
+        return dynCollectionMethodValue(lowerer, expr, "Map", name);
       lowerer.unsupported("SC1090", expr, `Map methods as values (call '${name}' directly)`);
     }
     return null;
@@ -2648,6 +2686,8 @@ export function lowerIntrinsicProperty(
       };
     }
     if (SET_METHODS.has(name)) {
+      if (isJsSourceFile(ts.getSourceFileOfNode(expr)) && !expr.questionDotToken)
+        return dynCollectionMethodValue(lowerer, expr, "Set", name);
       lowerer.unsupported("SC1090", expr, `Set methods as values (call '${name}' directly)`);
     }
     return null;
