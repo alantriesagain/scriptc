@@ -96,4 +96,57 @@ for (var i = 0; i < thrownValues.length; i++) {
   }
 }
 console.log(sums.join(","));
+
+// A defaulted first property is read once: its getter runs one time, and a
+// nullish thrown value throws the read's TypeError.
+var reads = 0;
+try {
+  throw {
+    get first() {
+      reads++;
+      return reads === 1 ? "once" : "again";
+    },
+  };
+} catch ({ first = "fallback", other = "none" }) {
+  console.log("getter", first, other, reads);
+}
+console.log(probe(function () {
+  try {
+    throw null;
+  } catch ({ p = 1 }) {
+    void p;
+  }
+}));
+
+// Each execution of the clause makes new bindings, so closures made in
+// different executions keep their own values.
+function collect() {
+  var readers = [];
+  for (var k = 0; k < 3; k++) {
+    try {
+      throw { value: k * 10 };
+    } catch ({ value }) {
+      readers.push(function () {
+        return value;
+      });
+    }
+  }
+  return readers.map(function (read) {
+    return read();
+  });
+}
+console.log(collect().join(","));
+var topReaders = [];
+for (var t = 0; t < 3; t++) {
+  try {
+    throw [t + 1];
+  } catch ([item]) {
+    topReaders.push(function () {
+      return item;
+    });
+  }
+}
+console.log(topReaders.map(function (read) {
+  return read();
+}).join(","));
 console.log("done");

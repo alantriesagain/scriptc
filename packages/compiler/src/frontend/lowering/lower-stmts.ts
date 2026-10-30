@@ -1262,7 +1262,9 @@ function hostVariableDeclarationOf(name: ts.Identifier): ts.VariableDeclaration 
   while (ts.isBindingElement(n) || ts.isArrayBindingPattern(n) || ts.isObjectBindingPattern(n)) {
     n = n.parent;
   }
-  return ts.isVariableDeclaration(n) ? n : null;
+  // A catch parameter is a VariableDeclaration of the CatchClause: its
+  // bindings are scoped to the clause, and each execution makes new ones.
+  return ts.isVariableDeclaration(n) && !ts.isCatchClause(n.parent) ? n : null;
 }
 
 /** `for (var x of ...)` loop variables: the ONE function-scoped binding
@@ -7829,24 +7831,25 @@ export function lowerTry(lowerer: Lowerer, stmt: ts.TryStatement): IrStmt {
               loc,
             },
           ];
-          if (ts.isObjectBindingPattern(vd.name)) {
-            // V8 spells the catch parameter's source '.catch' in the
-            // RequireObjectCoercible TypeError ("Cannot destructure
-            // property 'a' of '.catch' as it is null."), except when the
-            // first element has a default: V8 reads that key first, so a
-            // nullish source throws the read's TypeError instead.
-            const check: IrExpr | null = firstReadsWithDefault(vd.name)
-              ? firstKeyRead(lowerer, vd.name, () => varRef(tmp.id, DYN, loc), loc)
-              : {
-                  kind: "dynDestrCheck",
-                  value: varRef(tmp.id, DYN, loc),
-                  spelling: ".catch",
-                  ...firstPatternProp(lowerer, vd.name),
-                  type: DYN,
-                  loc,
-                };
-            if (check !== null) out.push({ kind: "exprStmt", expr: check, loc });
-          }
+          // V8 spells the catch parameter's source '.catch' in the
+          // RequireObjectCoercible TypeError ("Cannot destructure property
+          // 'a' of '.catch' as it is null."), except when the first element
+          // has a default: V8 reads that key first, so a nullish source
+          // throws the read's TypeError, which the pattern's own first read
+          // throws.
+          if (ts.isObjectBindingPattern(vd.name) && !firstReadsWithDefault(vd.name))
+            out.push({
+              kind: "exprStmt",
+              expr: {
+                kind: "dynDestrCheck",
+                value: varRef(tmp.id, DYN, loc),
+                spelling: ".catch",
+                ...firstPatternProp(lowerer, vd.name),
+                type: DYN,
+                loc,
+              },
+              loc,
+            });
           lowerer.lowerBindingPattern(
             vd.name as ts.ArrayBindingPattern | ts.ObjectBindingPattern,
             () => varRef(tmp.id, DYN, loc),
