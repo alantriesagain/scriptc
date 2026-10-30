@@ -5361,9 +5361,12 @@ export class LlDyn {
   /** A live capsule of a record or array value (+1; the value is
    * borrowed), as `dynFrom` with `liveRef` builds it; null for other
    * types. Closures boxed in a declaration-typed boundary program return
-   * their records and arrays this way. */
+   * their records and arrays this way. A TextEncoder, TextDecoder or
+   * StringDecoder record is null too: it boxes as its own handle, which
+   * holds the record by reference (toDynHelper). */
   private liveToDyn(B: BlockBuilder, t: IrType, expr: string): string | null {
     const host = this.host;
+    if (textCodecRecordClass(t, (id) => host.recordsById.get(id)) !== null) return null;
     if (t.kind === "union") {
       const arms = host.unionsById.get(t.unionId)?.arms ?? [];
       if (!arms.some((arm) => arm.kind === "record" || arm.kind === "array")) return null;

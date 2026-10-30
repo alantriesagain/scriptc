@@ -4,6 +4,8 @@
 // record payload into a fresh checked-dynamic object, so every reader (await,
 // .then, Promise.all, a widened function return) saw a different object than
 // the producer's record, and a write through the payload was invisible.
+import { StringDecoder } from "node:string_decoder";
+
 interface Row {
   id: number;
   tag: string;
@@ -93,6 +95,35 @@ async function main(): Promise<void> {
   // The function-adapter shape: a typed promise returned into an unknown slot.
   const adapted = (await viaAdapter(async () => shared)) as Row;
   console.log("adapter:", adapted === shared, adapted.tag);
+
+  // TextEncoder, TextDecoder and StringDecoder payloads box as their own
+  // handles, so a cast back to the codec type reads the same object.
+  const encoder = new TextEncoder();
+  const promisedEncoder: Promise<unknown> = Promise.resolve(encoder);
+  const awaitedEncoder = (await promisedEncoder) as TextEncoder;
+  console.log("encoder:", awaitedEncoder === encoder, awaitedEncoder.encode("hi").length);
+  const decoder = new TextDecoder();
+  const promisedDecoder: Promise<unknown> = Promise.resolve(decoder);
+  const awaitedDecoder = (await promisedDecoder) as TextDecoder;
+  console.log(
+    "decoder:",
+    awaitedDecoder === decoder,
+    awaitedDecoder.decode(new Uint8Array([104, 105])),
+  );
+  const strings = new StringDecoder("utf8");
+  const promisedStrings: Promise<unknown> = Promise.resolve(strings);
+  const awaitedStrings = (await promisedStrings) as StringDecoder;
+  console.log(
+    "string decoder:",
+    awaitedStrings === strings,
+    awaitedStrings.write(Buffer.from("ok")),
+  );
+  const maybeDecoder: TextDecoder | undefined = decoder;
+  const promisedMaybe: Promise<unknown> = Promise.resolve(maybeDecoder);
+  const awaitedMaybe = (await promisedMaybe) as TextDecoder;
+  console.log("decoder arm:", awaitedMaybe === decoder, awaitedMaybe.encoding);
+  const castEncoder = promisedEncoder as unknown as Promise<TextEncoder>;
+  console.log("encoder cast:", (await castEncoder) === encoder);
 
   // An empty record keeps its identity on both the plain and promise paths.
   const empty: Empty = {};
