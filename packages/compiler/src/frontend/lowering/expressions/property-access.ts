@@ -951,6 +951,29 @@ export function lowerPropertyAccessExpr(
     const promiseMember = lowerPromiseConstructorRead(lowerer, expr);
     if (promiseMember) return promiseMember;
   }
+  // A weak collection's method read as a VALUE in a JavaScript source
+  // (`wm.has.call(x, k)` — the WeakMap/WeakSet brand-check tests): the
+  // runtime's interned prototype function, which applies the method to its
+  // own receiver and throws Node's TypeError for a foreign one. A direct
+  // call keeps the instance fast path (`dynKeyGet` dispatches to the
+  // handle), and an optional read keeps the fence.
+  if (
+    !expr.questionDotToken &&
+    isJsSourceFile(ts.getSourceFileOfNode(expr)) &&
+    !isCalleeOf(expr) &&
+    // `WeakMap.prototype.has` is the prototype table's own read: it never
+    // lowers the prototype object (a value read of `WeakMap.prototype`
+    // is a fence), so leave that spelling there.
+    !(
+      ts.isPropertyAccessExpression(expr.expression) &&
+      expr.expression.name.text === "prototype" &&
+      stdlibGlobalNameOf(lowerer, expr.expression.expression) !== null
+    )
+  ) {
+    const prototype = lowerer.weakCollectionNameOf(lowerer.typeOf(expr.expression));
+    if (prototype !== null && WEAK_COLLECTION_METHOD_NAMES[prototype].has(expr.name.text))
+      return weakCollectionMethodValue(lowerer, expr, prototype, expr.name.text);
+  }
   const handled =
     lowerer.lowerProcessEnvGet(expr) ??
     lowerer.lowerServerProperty(expr) ??
@@ -5207,6 +5230,48 @@ const OBJECT_PROTOTYPE_VALUE_READS: ReadonlySet<string> = new Set([
   "hasOwnProperty",
   "propertyIsEnumerable",
 ]);
+
+/** The method names each weak collection's prototype declares. */
+const WEAK_COLLECTION_METHOD_NAMES: Record<"WeakMap" | "WeakSet", ReadonlySet<string>> = {
+  WeakMap: new Set(["get", "set", "has", "delete"]),
+  WeakSet: new Set(["add", "has", "delete"]),
+};
+
+/** A weak-collection method read as a VALUE (`wm.has`, the
+ * `map.has.call(x, k)` brand-check tests): the runtime's interned prototype
+ * function for that name, which applies the method to its own receiver and
+ * throws Node's brand-check TypeError when that receiver is not a
+ * WeakMap/WeakSet. Only JavaScript sources take this path: a typed source
+ * keeps its refusal (the checker's signature has no value form). The
+ * receiver expression still runs for its effects. */
+function weakCollectionMethodValue(
+  lowerer: Lowerer,
+  expr: ts.PropertyAccessExpression,
+  prototype: "WeakMap" | "WeakSet",
+  name: string,
+): IrExpr {
+  const loc = locOf(expr);
+  const method: IrExpr = {
+    kind: "libCall",
+    fn: "dyn.builtinMethod",
+    args: [
+      { kind: "strLit", value: prototype, type: STRING, loc },
+      { kind: "strLit", value: name, type: STRING, loc: locOf(expr.name) },
+    ],
+    type: DYN,
+    loc,
+  };
+  const receiver = lowerer.lowerExpr(expr.expression);
+  return isSafeToDiscard(receiver)
+    ? method
+    : {
+        kind: "seqExpr",
+        stmts: [{ kind: "exprStmt", expr: receiver, loc: locOf(expr.expression) }],
+        result: method,
+        type: DYN,
+        loc,
+      };
+}
 
 /** Whether `expr` is the callee of a call (`o.toString()`), which keeps its
  * call lowering rather than reading the member as a value. */

@@ -5363,17 +5363,30 @@ export class Lowerer {
 
   /** A stdlib WeakMap or WeakSet, alone or with `null`/`undefined`. */
   private weakCollectionType(type: ts.Type): boolean {
+    return this.weakCollectionNameOf(type) !== null;
+  }
+
+  /** The stdlib collection a type denotes — `WeakMap` or `WeakSet`,
+   * alone or with `null`/`undefined` — or null for everything else.
+   * The predicate behind weak-collection lowering and the JavaScript
+   * value read of one of their methods. */
+  weakCollectionNameOf(type: ts.Type): "WeakMap" | "WeakSet" | null {
+    let name: "WeakMap" | "WeakSet" | null = null;
     const weak = (part: ts.Type): boolean => {
       const symbol = part.getSymbol();
-      return (
-        ((symbol !== undefined && ts.symbolName(symbol) === "WeakMap") ||
-          (symbol !== undefined && ts.symbolName(symbol) === "WeakSet")) &&
-        symbol.declarations.some(
+      if (symbol === undefined) return false;
+      const symbolName = ts.symbolName(symbol);
+      if (symbolName !== "WeakMap" && symbolName !== "WeakSet") return false;
+      if (
+        !symbol.declarations.some(
           (d) => ts.isInterfaceDeclaration(d) && this.isStdlibFile(ts.getSourceFileOfNode(d)),
         )
-      );
+      )
+        return false;
+      name = symbolName;
+      return true;
     };
-    return this.stdlibHandleType(type, weak);
+    return this.stdlibHandleType(type, weak) ? name : null;
   }
 
   /** A type `handle` accepts, alone or with `null`/`undefined`. */
