@@ -1956,8 +1956,11 @@ export function isDatePrototypeWrite(lowerer: Lowerer, node: ts.Expression): boo
           (parent.operatorToken.kind >= ts.SyntaxKind.FirstCompoundAssignment &&
             parent.operatorToken.kind <= ts.SyntaxKind.LastCompoundAssignment))) ||
       ts.isDeleteExpression(parent) ||
-      ts.isPrefixUnaryExpression(parent) ||
-      ts.isPostfixUnaryExpression(parent);
+      // `++`/`--` write their operand; the other prefix unary forms (`!`,
+      // `typeof`, `void`, `+`, `-`, `~`) only read it.
+      ((ts.isPrefixUnaryExpression(parent) || ts.isPostfixUnaryExpression(parent)) &&
+        (parent.operator === ts.SyntaxKind.PlusPlusToken ||
+          parent.operator === ts.SyntaxKind.MinusMinusToken));
     return written && depth + steps <= 1;
   }
 }

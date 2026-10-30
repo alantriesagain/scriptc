@@ -8840,8 +8840,9 @@ function lowerObjectStaticCall(
     const targetNode = call.arguments.nodes[0]!;
     // Object.defineProperty/defineProperties over a standard-library prototype
     // value: a typed Date never observes a dynamic definition there, so the
-    // write keeps the fence it reached before the value existed.
-    fenceDatePrototypeWriteCall(lowerer, targetNode);
+    // write keeps the fence it reached before the value existed. The
+    // descriptor READ below is not a write and stays open.
+    if (member === "defineProperty") fenceDatePrototypeWriteCall(lowerer, targetNode);
     let target = tryLowerExpression(lowerer, targetNode);
     // The checker gives C.prototype the instance type, but its lowered
     // value is the shared prototype table, not an instance to unbox.
