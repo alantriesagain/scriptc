@@ -38,6 +38,15 @@ export interface NativeLinkFeatures {
   /** The program uses process.stdin.setEncoding, string 'data' listeners
    * or stdio 'resize' events: links the SCR_STDIO_EXTENDED events unit. */
   stdioExtended?: boolean;
+  /** writeFile's `flag` disposition or copyFile's mode argument:
+   * scr_fs_flags.c and the SCR_FS_FLAGS build of scr_fs_cp.c. */
+  fsFlags?: boolean;
+  /** string_decoder's checked-dynamic chunk forms: scr_bytes_strdec_dyn.c. */
+  strdecDyn?: boolean;
+  /** process.prependListener, stdin.isRaw or server.off: the
+   * SCR_PROCESS_EXTRAS builds of scr_events.c and scr_async_dyn.c and the
+   * SCR_NET_SERVER_OFF build of scr_net.c. */
+  processExtras?: boolean;
   /** A write completion callback takes the error argument: links the
    * SCR_STREAM_WRITE_ERRORS build of the stream unit. */
   streamWriteErrors?: boolean;
@@ -123,6 +132,13 @@ export interface NativeLinkFeatures {
   utilPromisify: boolean;
   dynBuiltinClass: boolean;
   dynBuiltinStream: boolean;
+  /** An Array.prototype method runs over an array-like receiver:
+   * scr_dyn_array_like.c. Absent (false) otherwise, so programs that never
+   * call one over an array-like keep their exact link line. */
+  arrayLikeDispatch?: boolean;
+  /** Number.prototype or Boolean.prototype read as a value:
+   * scr_dyn_builtin_prototype.c. Absent (false) otherwise. */
+  builtinPrototypeValue?: boolean;
   parseArgs: boolean;
   stream: boolean;
   net: boolean;
@@ -139,6 +155,10 @@ export interface NativeLinkFeatures {
   watch: boolean;
   /** fs.watchFile/fs.unwatchFile: scr_watch_file.c. */
   watchFile: boolean;
+  /** A typed fs read whose bytes value the program can observe as a Buffer:
+   * scr_lib.c's SCR_FS_BUFFER_BRAND build, so programs that never see the
+   * brand keep the default object. */
+  fsBufferBrand: boolean;
   foreignFfi: boolean;
   nodeTest: boolean;
   tls: boolean;

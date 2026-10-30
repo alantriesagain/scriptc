@@ -1156,6 +1156,8 @@ void scr_dyn_symbol_key_set(ScrDyn *value, ScrDyn *key, ScrDyn *stored);
 void scr_dyn_symbol_field_set(ScrDyn *value, ScrDyn *key, ScrDyn *stored);
 void scr_dyn_symbol_key_placeholder(ScrDyn *value, ScrDyn *key);
 bool scr_dyn_has_key_computed(const ScrDyn *value, const ScrDyn *key);
+/* Reflect.has's target check: Node's TypeError pending for a primitive. */
+void scr_dyn_reflect_has_target(const ScrDyn *target);
 bool scr_dyn_has_own_computed(const ScrDyn *value, const ScrDyn *key);
 bool scr_dyn_property_is_enumerable_computed(const ScrDyn *value, const ScrDyn *key);
 void scr_dyn_key_delete_computed(ScrDyn *value, const ScrDyn *key, bool strict);
@@ -1575,6 +1577,14 @@ void scr_class_throw_read_only(ScrStr *field, ScrStr *owner);
 void scr_class_throw_not_extensible(ScrStr *field);
 ScrDyn *scr_dyn_get_own_property_descriptor(ScrDyn *target, ScrDyn *key);
 ScrDyn *scr_dyn_array_proto_call(ScrDyn *target, ScrStr *method, ScrDyn *args);
+/* Array.prototype's generic methods over an array-like receiver
+ * (scr_dyn_array_like.c, linked only into programs that call them from a
+ * JavaScript source): +1, or NULL with the exception pending. */
+ScrDyn *scr_dyn_array_like_call(ScrDyn *recv, ScrStr *method, ScrDyn *args);
+/* Number.prototype or Boolean.prototype as a value, one object per thread
+ * (scr_dyn_builtin_prototype.c, linked only into programs that read them
+ * from a JavaScript source); `kind` is "Number" or "Boolean". +1. */
+ScrDyn *scr_dyn_builtin_prototype(const ScrStr *kind);
 ScrDyn *scr_dyn_array_prototype(void); /* +1, installs native method adapters */
 ScrDyn *scr_dyn_array_prototype_base(void); /* +1, shared native array identity */
 /* Names the prototype object of a compiled class `name` for util.inspect
@@ -2051,6 +2061,19 @@ typedef struct ScrDynHandleOps {
    * (+1); NULL = the class has no inspection, and util.inspect throws the
    * "not supported yet" Error. */
   ScrDyn *(*inspect_view)(void *h);
+  /* util.inspect's text for the instance within the depth limit (+1),
+   * for a class whose inspector ignores util.inspect's options
+   * (TextDecoder's); past the limit util.inspect prints `[cls]`. Takes
+   * precedence over inspect_view. */
+  ScrStr *(*inspect_text)(void *h);
+  /* util.inspect prints the view alone, without the class name (the
+   * inspector's view object names no constructor: TextEncoder's). */
+  bool inspect_view_bare;
+  /* The view is what the class's custom inspector prints. With
+   * customInspect: false Node prints the instance's internal slots, which
+   * the runtime does not model: util.inspect throws the "not supported yet"
+   * Error there, and prints `[cls]` past the depth limit as Node does. */
+  bool inspect_custom_only;
   /* structuredClone of the handle (+1 new box); NULL = DataCloneError. */
   ScrDyn *(*clone)(void *h);
   /* JSON.stringify writes `{}` (the class keeps its state in internal
@@ -2313,6 +2336,7 @@ ScrDyn *scr_gen_receiver(void);
  * firing site opens/closes it around a 'data' pass; scr_dyn_new_chunk
  * answers a Buffer-flavored bytes box, or a string inside the window. */
 void scr_dyn_chunk_enc(bool utf8);
+void scr_dyn_chunk_text(ScrStr *text); /* a decoded string instead; borrowed, NULL closes */
 ScrDyn *scr_dyn_new_chunk(const ScrBytes *b);
 
 /* The JSON text of a dyn value: the JSON.stringify text (+1),
