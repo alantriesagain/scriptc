@@ -10002,8 +10002,8 @@ function destructuringAssignInto(
       ts.isBinaryExpression(rhsInner) &&
       rhsInner.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
       (ts.isObjectLiteralExpression(rhsInner.left) || ts.isArrayLiteralExpression(rhsInner.left));
-    if (!checkedByInner) {
-      const spelling = rhs === null ? null : destrSpellingOf(rhs);
+    if (!checkedByInner && rhs !== null) {
+      const spelling = destrSpellingOf(rhs);
       if (spelling === null) {
         lowerer.unsupported(
           "SC1031",
@@ -10036,19 +10036,56 @@ function destructuringAssignInto(
     }
     for (const prop of target.properties.nodes) {
       const piece = destructAssignPiece(lowerer, prop);
-      const read: IrExpr = {
+      const propLoc = locOf(prop);
+      let read: IrExpr = {
         kind: "dynKeyGet",
-        key: { kind: "strLit", value: piece.field, type: STRING, loc: locOf(prop) },
+        key: { kind: "strLit", value: piece.field, type: STRING, loc: propLoc },
         value: tmpRef(),
         type: DYN,
-        loc: locOf(prop),
+        loc: propLoc,
       };
+      if (piece.dflt !== undefined) {
+        // `{ x = 1 }` / `{ x: y = 1 }`: the default fires on the undefined
+        // read and is evaluated lazily, exactly the declaration path's
+        // checked-dynamic default.
+        const readTmp = lowerer.declareHiddenLocal("%destr", DYN);
+        out.push({ kind: "varDecl", localId: readTmp.id, init: read, loc: propLoc });
+        const readRef: IrExpr = { kind: "varRef", localId: readTmp.id, type: DYN, loc: propLoc };
+        read = {
+          kind: "ternary",
+          cond: { kind: "dynTest", test: "undefined", value: readRef, type: BOOL, loc: propLoc },
+          then: lowerer.coerceInto(piece.dflt, lowerer.lowerExpr(piece.dflt), DYN),
+          else_: readRef,
+          type: DYN,
+          loc: propLoc,
+        };
+      }
       out.push({
         kind: "assign",
         localId: piece.target.id,
         value: lowerer.coerceInto(prop, read, piece.target.type),
-        loc: locOf(prop),
+        loc: propLoc,
       });
+    }
+    if (rhs === null && target.properties.nodes.length === 0) {
+      // A pattern with no reads still owes the source's own coercion, and a
+      // PRE-LOWERED source (`for ({} of …)`) has no source text: V8 reads
+      // the value instead of spelling it ("Cannot read properties of null").
+      for (const unit of ["null", "undefined"] as const) {
+        out.push({
+          kind: "if",
+          cond: { kind: "dynTest", test: unit, value: tmpRef(), type: BOOL, loc },
+          then: [
+            {
+              kind: "exprStmt",
+              expr: nodeThrowExpr(1, "", `Cannot read properties of ${unit}`, VOID, loc),
+              loc,
+            },
+          ],
+          else_: null,
+          loc,
+        });
+      }
     }
     return { stmts: out, value };
   }
@@ -10621,17 +10658,14 @@ function lowerAssignTargetInto(
 function destructAssignPiece(
   lowerer: Lowerer,
   prop: ts.ObjectLiteralElementLike,
-): { field: string; target: { id: string; type: IrType } } {
+): { field: string; target: { id: string; type: IrType }; dflt?: ts.Expression } {
   let fieldName: string;
   let bindTo: ts.Expression;
+  let dflt: ts.Expression | undefined;
   if (ts.isShorthandPropertyAssignment(prop)) {
-    if (prop.objectAssignmentInitializer) {
-      lowerer.unsupported(
-        "SC1031",
-        prop,
-        "destructuring assignment with defaults (assign, then apply the default)",
-      );
-    }
+    // `{ x = 1 }`: the shorthand's default (the checker's name resolution
+    // still answers the outer binding through the shorthand).
+    dflt = prop.objectAssignmentInitializer;
     fieldName = (prop.name as ts.Identifier).text;
     bindTo = prop.name as ts.Identifier;
   } else if (ts.isPropertyAssignment(prop)) {
@@ -10645,7 +10679,12 @@ function destructAssignPiece(
       );
     }
     fieldName = folded ?? "";
+    // `{ x: y = 1 }`: a defaulted target, the AssignmentPattern spelling.
     bindTo = prop.initializer;
+    if (ts.isBinaryExpression(bindTo) && bindTo.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+      dflt = bindTo.right;
+      bindTo = bindTo.left;
+    }
   } else {
     lowerer.unsupported("SC1031", prop, "destructuring assignment with rest or spread properties");
   }
@@ -10671,7 +10710,7 @@ function destructAssignPiece(
       `assignment to '${bindTo.text}' (not a writable local or module global)`,
     );
   }
-  return { field: fieldName, target };
+  return { field: fieldName, target, ...(dflt !== undefined ? { dflt } : {}) };
 }
 
 /** The ARRAY half of destructuring assignment: element assigns from a
