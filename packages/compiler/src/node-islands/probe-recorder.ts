@@ -20,6 +20,8 @@
  *     (island-local, since native code has its own builtins, but
  *     observable by other island modules evaluated out of order);
  *   - every file the load required (the module's closure), and a throw;
+ *     a load that resolves a file outside every node_modules directory (the
+ *     program's own source) throws before that file evaluates;
  *
  * and takes the interface snapshot of the module's value (snapshot.ts).
  * Calls made by Node's own internals (the module loader reading files,
@@ -429,11 +431,19 @@ exports.probe = function probe(input) {
   undo.push(() => hook.disable());
   // The closure: a resolve hook (no frame of ours stays on the stack while
   // modules evaluate, so Node's node_modules checks see the real callers).
+  // The probe evaluates installed packages only: a file outside every
+  // node_modules directory is the program's own source (a program module,
+  // or a project file a package requires), and its load throws before the
+  // file evaluates, so the module that asked for it stays eager.
   const hooks = Module.registerHooks({
     resolve(specifier, context, nextResolve) {
       const result = nextResolve(specifier, context);
-      if (recording && typeof result.url === "string" && result.url.startsWith("file:"))
-        files.add(require("node:url").fileURLToPath(result.url));
+      if (recording && typeof result.url === "string" && result.url.startsWith("file:")) {
+        const file = require("node:url").fileURLToPath(result.url);
+        if (!/[\\/]node_modules[\\/]/.test(file))
+          throw new Error("the build does not evaluate " + file + ", a file of the program");
+        files.add(file);
+      }
       return result;
     },
   });
