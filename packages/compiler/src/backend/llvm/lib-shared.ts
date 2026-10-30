@@ -683,6 +683,10 @@ export const LIB_FN_SYMS: Record<string, string> = {
   "bigstats.birthtime": "scr_stats_big_birthtime",
   "text.decode": "scr_text_decode",
   "bytes.bufferSource": "scr_bytes_buffer_source",
+  "text.decoderInput": "scr_text_decoder_input",
+  "text.decoderFlag": "scr_text_decoder_flag",
+  "text.decodeStreamOption": "scr_text_decode_stream_option",
+  "text.decoderEncodingOptions": "scr_text_decoder_encoding_options",
   "bytes.copyBrand": "scr_bytes_copy_brand",
   "text.decodeBufferSource": "scr_text_decode_buffer_source",
   "text.decodeOptions": "scr_text_decode_options",
@@ -815,6 +819,7 @@ export const LIB_FN_SYMS: Record<string, string> = {
   // Undeclared source properties kept beside a checked record (scr_json.c).
   "record.sourceHas": "scr_record_source_has",
   "record.sourceSpread": "scr_record_source_spread",
+  "record.sourceNote": "scr_record_source_note",
   // WHATWG URL + URLSearchParams (scr_url.c / scr_url_params.c):
   // constructions +1; url.new, the fileURLToPath pair, the win32
   // pathToFileURL flavor, and sp.fromPairs throw catchably (may-throw).
@@ -1495,6 +1500,7 @@ export const LIB_FN_SYMS: Record<string, string> = {
   // the client request forms have non-generic shapes — special-cased.
   "net.serverPort": "scr_net_server_port",
   "net.serverListening": "scr_net_server_listening",
+  "net.listenPortDyn": "scr_net_listen_port_dyn",
   "net.sockSetRef": "scr_net_sock_set_ref",
   "net.serverSetRef": "scr_net_server_set_ref",
   "net.serverOff": "scr_net_server_off",
