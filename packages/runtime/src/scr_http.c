@@ -977,6 +977,7 @@ struct ScrHttpRes {
   size_t strict_bytes_written; /* Node counts UTF-8 bytes, not JS characters */
   bool keep_alive; /* the REQUEST's verdict; Connection: close overrides */
   bool destroyed; /* res.destroy()/teardown — res.destroyed (true in 'close') */
+  bool unflushed; /* the socket closed before the body went out: no 'finish' */
   bool socket_detached; /* finish/close removes the response's socket view */
   /* cork()/uncork(): corked counts the nesting (res.writableCorked);
    * writes while corked coalesce in cork_buf and flush as ONE write when
@@ -2288,7 +2289,7 @@ static void scr_http_queue_req_aborted(ScrHttpReq *req) {
  * body went out (the handler's synchronous tail runs first, Node's
  * deferred emit — the res 'close' precedent). */
 static void scr_http_queue_res_finish(ScrHttpRes *res) {
-  if (res->finish_queued) return;
+  if (res->finish_queued || res->unflushed) return;
   res->finish_queued = true;
   scr_http_emit_push(SCR_HTTP_EMIT_RES_FINISH, scr_http_res_retain(res));
 }
@@ -2701,6 +2702,7 @@ static void scr_http_conn_drop_request(ScrHttpConn *conn, bool fire_end) {
     conn->req = NULL;
   }
   if (conn->res) {
+    if (!conn->res->finished) conn->res->unflushed = true;
     conn->res->conn = NULL;
     scr_http_res_release(conn->res);
     conn->res = NULL;
@@ -3503,10 +3505,18 @@ static void scr_http_conn_abort_incoming(ScrHttpConn *conn) {
     return;
   req->destroyed = true;
   req->aborted = true;
+  /* the later events queue first: an 'aborted' listener can end the
+   * response, which detaches it from the connection and queues the
+   * request's 'close'; that response never sends its body */
+  ScrHttpRes *res = scr_http_res_retain(conn->res);
+  res->unflushed = true;
+  scr_http_queue_res_close(res);
+  scr_http_queue_req_aborted(req);
+  scr_http_req_retain(req);
   scr_net_fire0_this(&req->aborted_ls, req, SCR_DYNH_HTTP_REQ);
   scr_net_ls_drop(&req->aborted_ls);
-  scr_http_queue_res_close(conn->res);
-  scr_http_queue_req_aborted(req);
+  scr_http_res_release(res);
+  scr_http_req_release(req);
 }
 
 static void scr_http_conn_closed(void *ctx) {
