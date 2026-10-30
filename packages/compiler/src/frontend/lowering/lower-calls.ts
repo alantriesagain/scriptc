@@ -8937,6 +8937,10 @@ function lowerObjectStaticCall(
     call.arguments.nodes.length === 2 &&
     !call.arguments.nodes.some((a) => ts.isSpreadElement(a))
   ) {
+    // A standard-library prototype value as the target is a write through it,
+    // exactly like the defineProperty form above: a typed Date never observes
+    // a definition made on the dynamic prototype object.
+    fenceDatePrototypeWriteCall(lowerer, call.arguments.nodes[0]!);
     const prototype = lowerClassPrototypeDescriptors(lowerer, call, member);
     if (prototype) return prototype;
     let target = tryLowerExpression(lowerer, call.arguments.nodes[0]!);
