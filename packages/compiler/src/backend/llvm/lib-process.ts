@@ -960,6 +960,34 @@ export function emitErrorsEventsLibCall(host: LlvmEmitterContext, e: LibCallExpr
     host.emitPendingCheck();
     return { name: t, type: e.type };
   }
+  if (e.fn === "emitter.emitErrorValue") {
+    // (recv, ...payload as dyn): emit('error') with a non-Error payload.
+    // The unhandled case renders the payload with util.inspect
+    // (scr_insp_dyn), which this call links.
+    const args = e.args.map((a) => host.emitExpr(a));
+    const n = args.length - 1;
+    let payload = "null";
+    if (n > 0) {
+      const arr = B.slot();
+      B.entryAllocas.push(`${arr} = alloca [${n} x ptr]`);
+      for (let i = 0; i < n; i++) {
+        const slot = B.tmp();
+        B.line(`${slot} = getelementptr inbounds [${n} x ptr], ptr ${arr}, i64 0, i64 ${i}`);
+        B.line(`store ptr ${args[i + 1]!.name}, ptr ${slot}`);
+      }
+      payload = arr;
+    }
+    host.declare(`declare ptr @scr_insp_dyn(ptr, double, double)`);
+    host.declare(
+      `declare zeroext i1 @scr_emitter_emit_error_value(ptr, ptr, ${host.sizeType}, ptr)`,
+    );
+    const t = B.tmp();
+    B.line(
+      `${t} = call i1 @scr_emitter_emit_error_value(ptr ${args[0]!.name}, ptr ${payload}, ${host.sizeType} ${n}, ptr @scr_insp_dyn)`,
+    );
+    host.emitPendingCheck();
+    return { name: t, type: e.type };
+  }
   if (e.fn === "emitter.emitFlex" || e.fn === "emitter.emitAny") {
     const args = e.args.map((a) => host.emitExpr(a));
     const n = args.length - 2;

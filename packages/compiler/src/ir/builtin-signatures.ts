@@ -4350,6 +4350,9 @@ function buildLibFnSignatures() {
     "emitter.emit": { argTypes: [null, STRING], result: BOOL },
     "emitter.emitFlex": { argTypes: [null, STRING], result: BOOL },
     "emitter.emitAny": { argTypes: [null, STRING], result: BOOL },
+    /** emit('error', ...payload) with a non-Error payload: (recv, then the
+     * arguments boxed) — VARIADIC like emitFlex. */
+    "emitter.emitErrorValue": { argTypes: [null], result: BOOL },
     /** An untyped emit of an event with a fixed tuple: (recv, name, k, then
      * k checked-dynamic arguments as given, then the event's converted
      * tuple) — VARIADIC like emitter.emit. hasTyped answers whether a
