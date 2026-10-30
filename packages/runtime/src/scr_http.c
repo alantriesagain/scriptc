@@ -2294,9 +2294,23 @@ static void scr_http_queue_res_finish(ScrHttpRes *res) {
   scr_http_emit_push(SCR_HTTP_EMIT_RES_FINISH, scr_http_res_retain(res));
 }
 
+/* The response's socket closed before its body went out: 'finish' and the
+ * end(cb) callbacks never fire, as in Node, so the ones registered so far
+ * are released now (a callback that captures the response would otherwise
+ * keep it alive) and later ones are not kept. */
+static void scr_http_res_mark_unflushed(ScrHttpRes *res) {
+  res->unflushed = true;
+  scr_net_ls_drop(&res->finish_ls);
+  scr_net_ls_drop(&res->endcb_ls);
+}
+
 /* res.on('finish', cb): fires deferred once the body went out, after the
  * end(cb) callbacks and after the response detached its socket. */
 void scr_http_res_on_finish(ScrHttpRes *r, ScrClosure *cb /*moves*/) {
+  if (r->unflushed) {
+    scr_closure_release(cb);
+    return;
+  }
   scr_net_ls_add(&r->finish_ls, cb, NULL, true);
   if (r->finished) scr_http_queue_res_finish(r);
 }
@@ -2318,6 +2332,10 @@ void scr_http_res_on_end_callback(ScrHttpRes *r, ScrClosure *cb /*moves*/) {
     scr_net_ls_add(&now, cb, NULL, true);
     scr_net_fire0_this(&now, r, SCR_DYNH_HTTP_RES);
     scr_net_ls_drop(&now);
+    return;
+  }
+  if (r->unflushed) {
+    scr_closure_release(cb);
     return;
   }
   scr_net_ls_add(&r->endcb_ls, cb, NULL, true);
@@ -2702,7 +2720,7 @@ static void scr_http_conn_drop_request(ScrHttpConn *conn, bool fire_end) {
     conn->req = NULL;
   }
   if (conn->res) {
-    if (!conn->res->finished) conn->res->unflushed = true;
+    if (!conn->res->finished) scr_http_res_mark_unflushed(conn->res);
     conn->res->conn = NULL;
     scr_http_res_release(conn->res);
     conn->res = NULL;
@@ -3509,7 +3527,7 @@ static void scr_http_conn_abort_incoming(ScrHttpConn *conn) {
    * response, which detaches it from the connection and queues the
    * request's 'close'; that response never sends its body */
   ScrHttpRes *res = scr_http_res_retain(conn->res);
-  res->unflushed = true;
+  scr_http_res_mark_unflushed(res);
   scr_http_queue_res_close(res);
   scr_http_queue_req_aborted(req);
   scr_http_req_retain(req);
