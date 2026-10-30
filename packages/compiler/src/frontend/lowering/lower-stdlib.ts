@@ -2290,7 +2290,7 @@ function lowerRejectedImport(
       { kind: "exprStmt", expr: hop, loc },
       {
         kind: "exprStmt",
-        expr: nodeThrowExpr(errorKind, crash.code ?? "", crash.message, VOID, loc),
+        expr: nodeThrowExpr(errorKind, crash.code ?? "", crash.message, VOID, loc, crash.url),
         loc,
       },
       { kind: "return", value: dynUndefinedExpr(loc), loc },
