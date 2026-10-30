@@ -757,8 +757,10 @@ function inspectSupport(
       visiting.add(t.shapeId);
       const shape = lowerer.shapes.get(t.shapeId);
       if (!shape) return "this record shape has no inspect lowering";
-      const codec = recordTextCodecClass(shape);
-      if (codec !== null) return `${codec} instances have no inspect lowering yet`;
+      if (recordTextCodecClass(shape) !== null) {
+        visiting.delete(t.shapeId);
+        return null;
+      }
       // Accessor-carrying shapes: Node prints the accessor names as
       // `x: [Getter]` / `[Setter]` / `[Getter/Setter]` in insertion order
       // — a position the static field walk does not track (accessor slots
@@ -1031,10 +1033,11 @@ function inspectExprBody(
   ownRendering: boolean,
 ): IrExpr {
   // A Dirent row renders through its dyn view: Node's `Dirent { ... }`
-  // with the Symbol(type) key.
+  // with the Symbol(type) key. So do TextEncoder and TextDecoder, through
+  // their handles' inspectors.
   if (t.kind === "record") {
     const shape = lowerer.shapes.get(t.shapeId);
-    if (shape && isDirentShape(shape)) {
+    if (shape && (isDirentShape(shape) || recordTextCodecClass(shape) !== null)) {
       return {
         kind: "libCall",
         fn: "insp.dyn",
@@ -2965,6 +2968,8 @@ function parseInspectOptions(
       (value.kind === ts.SyntaxKind.TrueKeyword || value.kind === ts.SyntaxKind.FalseKeyword)
     ) {
       options.customInspect = value.kind === ts.SyntaxKind.TrueKeyword;
+    } else if (key === "showHidden" && value.kind === ts.SyntaxKind.FalseKeyword) {
+      // util.inspect's default.
     } else if (dir && key === "customInspect") {
       // console.dir's own default; only that value is lowered.
       if (value.kind !== ts.SyntaxKind.FalseKeyword) {
@@ -2978,7 +2983,7 @@ function parseInspectOptions(
       lowerer.noLowering(
         `${surface} with the '${key}' option`,
         prop,
-        `the lowered options are depth (numeric literal or null), colors: false, compact (false or a number), breakLength, ${dir ? "sorted (true or false), and customInspect: false" : "and sorted (true or false)"}`,
+        `the lowered options are depth (numeric literal or null), colors: false, showHidden: false, compact (false or a number), breakLength, ${dir ? "sorted (true or false), and customInspect: false" : "and sorted (true or false)"}`,
       );
     }
   }
