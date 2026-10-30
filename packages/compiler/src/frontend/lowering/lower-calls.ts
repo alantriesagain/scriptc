@@ -92,6 +92,7 @@ import {
   funcOf,
   isDynTypedRefType,
   isUnitType,
+  recordTextCodecClass,
   shapeHasAccessorSlots,
   shapeKeyOrders,
   typeEquals,
@@ -2767,8 +2768,12 @@ function objectToStringTag(lowerer: Lowerer, type: IrType): string | null {
       return "Symbol";
     case "array":
       return "Array";
-    case "record":
-      return "Object";
+    case "record": {
+      // TextEncoder and TextDecoder define Symbol.toStringTag on their
+      // prototypes.
+      const shape = lowerer.shapes.get(type.shapeId);
+      return (shape && recordTextCodecClass(shape)) ?? "Object";
+    }
     case "func":
     case "classval":
       return "Function";
