@@ -68,4 +68,17 @@ bus.emit(errName, new Error("handled"));
 bus.clear();
 bus.emit("greet", "cleared");
 console.log("names", emitter.eventNames().length);
+// Prefixed and suffixed emits reach listeners registered by an
+// unrestricted name.
+const channels = new EventEmitter();
+function listen(name: string): void {
+  channels.on(name, (d: unknown) => console.log("channel", name, JSON.stringify(d)));
+}
+listen("user:1");
+listen("job.done");
+const userId = String(1);
+const jobKind = ["jo", "b"].join("");
+console.log("prefixed", channels.emit("user:" + userId, { a: 1 }));
+console.log("suffixed", channels.emit(`${jobKind}.done`, 2));
+console.log("unmatched", channels.emit("user:" + String(2), 3));
 setTimeout(() => console.log("done"), 0);

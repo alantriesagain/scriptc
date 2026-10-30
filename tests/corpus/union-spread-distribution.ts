@@ -132,3 +132,23 @@ const base: Cmd = { type: "prompt", message: "before" };
 const copied = withId(base);
 if (base.type === "prompt") base.message = "after";
 console.log(JSON.stringify(copied), JSON.stringify(base));
+// A spread source whose evaluation changes a value an earlier property
+// reads: the earlier property keeps the value from before the spread.
+type Src = { kind: "a"; x: number } | { kind: "b"; y: string };
+type Stamped = { kind: "a"; x: number; at: number } | { kind: "b"; y: string; at: number };
+let clock = 0;
+function tick(s: Src): Src {
+  clock++;
+  return s;
+}
+const ticked: Src[] = [
+  { kind: "a", x: 1 },
+  { kind: "b", y: "s" },
+];
+for (const s of ticked) {
+  const stamped: Stamped = { at: clock, ...tick(s) };
+  console.log(JSON.stringify(stamped), clock);
+}
+const constStamp = 7;
+const fixed: Stamped = { at: constStamp, ...tick(ticked[0]!) };
+console.log(JSON.stringify(fixed), clock);

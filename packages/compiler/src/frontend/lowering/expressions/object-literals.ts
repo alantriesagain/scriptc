@@ -186,6 +186,43 @@ function pureKeyExpr(lowerer: Lowerer, expr: ts.Expression): boolean {
   return false;
 }
 
+/** Whether expr reads no state that evaluating other code could change:
+ * literals, `const` bindings, and unary operators over those. */
+function constantInitializer(lowerer: Lowerer, expr: ts.Expression): boolean {
+  if (ts.isParenthesizedExpression(expr) || ts.isNonNullExpression(expr))
+    return constantInitializer(lowerer, expr.expression);
+  if (ts.isAsExpression(expr) || ts.isTypeAssertion(expr))
+    return constantInitializer(lowerer, expr.expression);
+  if (ts.isStringLiteralLike(expr) || ts.isNumericLiteral(expr)) return true;
+  if (
+    expr.kind === ts.SyntaxKind.TrueKeyword ||
+    expr.kind === ts.SyntaxKind.FalseKeyword ||
+    expr.kind === ts.SyntaxKind.NullKeyword
+  )
+    return true;
+  if (
+    ts.isPrefixUnaryExpression(expr) &&
+    (expr.operator === ts.SyntaxKind.MinusToken ||
+      expr.operator === ts.SyntaxKind.PlusToken ||
+      expr.operator === ts.SyntaxKind.ExclamationToken ||
+      expr.operator === ts.SyntaxKind.TildeToken)
+  )
+    return constantInitializer(lowerer, expr.operand);
+  if (ts.isIdentifier(expr)) {
+    const decls = lowerer.checker.getSymbolAtLocation(expr)?.declarations ?? [];
+    return (
+      decls.length > 0 &&
+      decls.every(
+        (d) =>
+          ts.isVariableDeclaration(d) &&
+          ts.isVariableDeclarationList(d.parent) &&
+          (ts.getCombinedNodeFlags(d) & ts.NodeFlags.Const) !== 0,
+      )
+    );
+  }
+  return false;
+}
+
 /** A property's field name: identifier/string-literal keys directly,
  * foldable computed keys through literalComputedKey (the syntax pass
  * fenced everything else). */
@@ -2729,10 +2766,19 @@ function lowerDistributedUnionSpread(
   if (srcNode === null) return null;
   const site = srcNode;
   // The source evaluates before the dispatch, so everything written before
-  // it must be free of effects.
+  // it must be free of effects. When the source itself may have effects, an
+  // earlier property may also not read a value they could change: those
+  // properties must be constants.
+  const sourcePure = pureKeyExpr(lowerer, site);
   for (const prop of props.slice(0, spreadIndex)) {
-    if (ts.isShorthandPropertyAssignment(prop)) continue;
-    if (ts.isPropertyAssignment(prop) && pureKeyExpr(lowerer, prop.initializer)) continue;
+    if (sourcePure && ts.isShorthandPropertyAssignment(prop)) continue;
+    if (
+      ts.isPropertyAssignment(prop) &&
+      (sourcePure
+        ? pureKeyExpr(lowerer, prop.initializer)
+        : constantInitializer(lowerer, prop.initializer))
+    )
+      continue;
     return null;
   }
   const siteType = lowerer.mapTypeOf(lowerer.typeOf(site));
