@@ -240,7 +240,7 @@ struct ScrHttpReq {
   bool enc_utf8; /* setEncoding('utf8'): 'data' delivers strings */
   bool http10;   /* the parsed request/status line's version (httpVersion) */
   bool http2;    /* an h2 compat request (httpVersion "2.0") */
-  bool aborted;  /* h2: the stream died with our writable side open */
+  bool aborted;  /* the connection or h2 stream died with the response unfinished */
   bool close_queued;
   bool close_emitted; /* settled: err/close listeners dropped */
   bool join_dup; /* joinDuplicateHeaders: repeated names read joined ", " */
@@ -769,8 +769,8 @@ void scr_http_req_on_close(ScrHttpReq *r, ScrClosure *cb /*moves*/, bool once) {
   scr_net_ls_add(&r->close_ls, cb, NULL, once);
 }
 
-/* req.on('aborted') — the h2 compat event (an http/1 request registers
- * too; the parser lane never fires it, matching its 'error'-only story). */
+/* req.on('aborted'): the connection (or the h2 stream) closed before the
+ * response finished. */
 void scr_http_req_on_aborted(ScrHttpReq *r, ScrClosure *cb /*moves*/, bool once) {
   if (r->close_emitted || r->aborted) {
     scr_closure_release(cb);
@@ -1041,6 +1041,7 @@ struct ScrHttpRes {
   size_t strict_bytes_written; /* Node counts UTF-8 bytes, not JS characters */
   bool keep_alive; /* the REQUEST's verdict; Connection: close overrides */
   bool destroyed; /* res.destroy()/teardown — res.destroyed (true in 'close') */
+  bool unflushed; /* the socket closed before the body went out: no 'finish' */
   bool socket_detached; /* finish/close removes the response's socket view */
   /* cork()/uncork(): corked counts the nesting (res.writableCorked);
    * writes while corked coalesce in cork_buf and flush as ONE write when
@@ -2435,14 +2436,28 @@ static void scr_http_queue_req_aborted(ScrHttpReq *req) {
  * body went out (the handler's synchronous tail runs first, Node's
  * deferred emit — the res 'close' precedent). */
 static void scr_http_queue_res_finish(ScrHttpRes *res) {
-  if (res->finish_queued) return;
+  if (res->finish_queued || res->unflushed) return;
   res->finish_queued = true;
   scr_http_emit_push(SCR_HTTP_EMIT_RES_FINISH, scr_http_res_retain(res));
+}
+
+/* The response's socket closed before its body went out: 'finish' and the
+ * end(cb) callbacks never fire, as in Node, so the ones registered so far
+ * are released now (a callback that captures the response would otherwise
+ * keep it alive) and later ones are not kept. */
+static void scr_http_res_mark_unflushed(ScrHttpRes *res) {
+  res->unflushed = true;
+  scr_net_ls_drop(&res->finish_ls);
+  scr_net_ls_drop(&res->endcb_ls);
 }
 
 /* res.on('finish', cb): fires deferred once the body went out, after the
  * end(cb) callbacks and after the response detached its socket. */
 void scr_http_res_on_finish(ScrHttpRes *r, ScrClosure *cb /*moves*/) {
+  if (r->unflushed) {
+    scr_closure_release(cb);
+    return;
+  }
   scr_net_ls_add(&r->finish_ls, cb, NULL, true);
   if (r->finished) scr_http_queue_res_finish(r);
 }
@@ -2464,6 +2479,10 @@ void scr_http_res_on_end_callback(ScrHttpRes *r, ScrClosure *cb /*moves*/) {
     scr_net_ls_add(&now, cb, NULL, true);
     scr_net_fire0_this(&now, r, SCR_DYNH_HTTP_RES);
     scr_net_ls_drop(&now);
+    return;
+  }
+  if (r->unflushed) {
+    scr_closure_release(cb);
     return;
   }
   scr_net_ls_add(&r->endcb_ls, cb, NULL, true);
@@ -2848,6 +2867,7 @@ static void scr_http_conn_drop_request(ScrHttpConn *conn, bool fire_end) {
     conn->req = NULL;
   }
   if (conn->res) {
+    if (!conn->res->finished) scr_http_res_mark_unflushed(conn->res);
     conn->res->conn = NULL;
     scr_http_res_release(conn->res);
     conn->res = NULL;
@@ -3622,6 +3642,8 @@ static void scr_http_client_eof(ScrHttpConn *conn);
 static void scr_http_client_closed(ScrHttpConn *conn);
 static void scr_http_client_conn_free(ScrHttpConn *conn);
 
+static void scr_http_conn_abort_incoming(ScrHttpConn *conn);
+
 static void scr_http_conn_eof(void *ctx) {
   ScrHttpConn *conn = (ScrHttpConn *)ctx;
   if (conn->client_mode) {
@@ -3629,9 +3651,37 @@ static void scr_http_conn_eof(void *ctx) {
     return;
   }
   /* client FIN between requests: our half closes too (keep-alive over);
-   * mid-request it is an aborted request — everything settles quietly */
+   * with a response unfinished the request is aborted, as Node's
+   * socketOnEnd aborts it (httpAllowHalfOpen is off) */
+  scr_http_conn_abort_incoming(conn);
   scr_http_conn_drop_request(conn, false);
   conn->len = 0;
+}
+
+/* Node's abortIncoming: a request whose response is unfinished when its
+ * connection closes is destroyed with ECONNRESET "aborted". 'aborted'
+ * fires now, then the response's 'close', the request's 'error' (with a
+ * listener) and its 'close'. A request whose body was read to 'end' is
+ * already destroyed and only closes. */
+static void scr_http_conn_abort_incoming(ScrHttpConn *conn) {
+  ScrHttpReq *req = conn->req;
+  if (req == NULL || conn->res == NULL || conn->res->finished || req->end_consumed ||
+      req->close_emitted || req->destroyed)
+    return;
+  req->destroyed = true;
+  req->aborted = true;
+  /* the later events queue first: an 'aborted' listener can end the
+   * response, which detaches it from the connection and queues the
+   * request's 'close'; that response never sends its body */
+  ScrHttpRes *res = scr_http_res_retain(conn->res);
+  scr_http_res_mark_unflushed(res);
+  scr_http_queue_res_close(res);
+  scr_http_queue_req_aborted(req);
+  scr_http_req_retain(req);
+  scr_net_fire0_this(&req->aborted_ls, req, SCR_DYNH_HTTP_REQ);
+  scr_net_ls_drop(&req->aborted_ls);
+  scr_http_res_release(res);
+  scr_http_req_release(req);
 }
 
 static void scr_http_conn_closed(void *ctx) {
@@ -3640,6 +3690,7 @@ static void scr_http_conn_closed(void *ctx) {
     scr_http_client_closed(conn);
     return;
   }
+  scr_http_conn_abort_incoming(conn);
   scr_http_conn_drop_request(conn, false);
 }
 
@@ -3654,7 +3705,9 @@ static bool scr_http_client_sock_err(ScrHttpConn *conn, ScrStr *msg);
 static bool scr_http_conn_err(void *ctx, ScrStr *msg) {
   ScrHttpConn *conn = (ScrHttpConn *)ctx;
   if (conn->client_mode) return scr_http_client_sock_err(conn, msg);
-  if (conn->req && conn->req->err_ls.n > 0) {
+  if (conn->req != NULL && conn->res != NULL && !conn->res->finished) {
+    scr_http_conn_abort_incoming(conn);
+  } else if (conn->req && conn->req->err_ls.n > 0) {
     ScrStr *aborted = scr_str_new("aborted", 7);
     scr_net_fire_err_this(&conn->req->err_ls, aborted, conn->req, SCR_DYNH_HTTP_REQ);
     scr_str_release(aborted);
@@ -3895,7 +3948,12 @@ ScrStr *scr_http_req_http_version(ScrHttpReq *r) {
 double scr_http_req_http_version_major(ScrHttpReq *r) { return r->http2 ? 2 : 1; }
 double scr_http_req_http_version_minor(ScrHttpReq *r) { return r->http2 || r->http10 ? 0 : 1; }
 bool scr_http_req_aborted_flag(ScrHttpReq *r) { return r->aborted; }
-bool scr_http_req_complete(ScrHttpReq *r) { return (r->ended || r->received) && !r->aborted; }
+/* An HTTP/1 message is complete once all of it arrived, aborted or not, as
+ * Node's IncomingMessage.complete is. */
+bool scr_http_req_complete(ScrHttpReq *r) {
+  if (r->h2_stream != NULL) return (r->ended || r->received) && !r->aborted;
+  return r->received;
+}
 
 /* The stream died with the response side open: 'aborted' fires NOW (the
  * teardown macrotask, Node's position), then the close rides the sweep. */
@@ -5122,6 +5180,7 @@ static void scr_http_client_response_done(ScrHttpConn *conn) {
    * hint, otherwise the hint in milliseconds */
   double keep_alive_hint = res != NULL ? scr_http_response_keep_alive(res, c) : -2;
   if (res) {
+    res->received = true;
     scr_http_req_retain(res);
     scr_http_req_finish(res, true); /* fires 'end' */
   }
