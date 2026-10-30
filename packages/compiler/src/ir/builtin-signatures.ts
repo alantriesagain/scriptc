@@ -4894,7 +4894,7 @@ function buildLibFnSignatures() {
      * message, code — the %error marker skipped) and deep-compare each
      * against the caught value's; a mismatch throws the deep-equal
      * AssertionError (scr_assert.c). MAY THROW by design. */
-    "assert.expectsErrDyn": { argTypes: [DYN, DYN, STRING, BOOL], result: VOID },
+    "assert.expectsErrDyn": { argTypes: [DYN, DYN, STRING, BOOL, BOOL], result: VOID },
     /** A validation function against the caught value (Node's expectedException). */
     "assert.throwsValidate": { argTypes: [DYN, DYN, STRING, STRING, BOOL], result: VOID },
     // assert.ifError's typed entries (always throw; unit args never
