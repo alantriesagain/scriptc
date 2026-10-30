@@ -304,6 +304,7 @@ import {
 
 import { codeGenerationCalleeOf, lowerCodeGenerationCall } from "./code-generation.js";
 import { lowerRecordInheritedCall } from "./record-inherited.js";
+import { fenceDatePrototypeWriteCall } from "./expressions/property-access.js";
 
 const ZLIB_STREAM_METHODS: ReadonlySet<string> = new Set(["flush", "params", "close", "reset"]);
 
@@ -8521,6 +8522,9 @@ function lowerObjectStaticCall(
   if (member === "assign") {
     const prototype = lowerClassPrototypeAssign(lowerer, call);
     if (prototype) return prototype;
+    // A standard-library prototype value as the target is a write through it.
+    if (call.arguments.nodes.length > 0)
+      fenceDatePrototypeWriteCall(lowerer, call.arguments.nodes[0]!);
     if (
       isJsSourceFile(ts.getSourceFileOfNode(call)) &&
       call.arguments.nodes.length > 0 &&
@@ -8843,8 +8847,13 @@ function lowerObjectStaticCall(
     (member === "getOwnPropertyDescriptor" && call.arguments.nodes.length === 2)
   ) {
     if (call.arguments.nodes.some((a) => ts.isSpreadElement(a))) return null;
-    let target = tryLowerExpression(lowerer, call.arguments.nodes[0]!);
     const targetNode = call.arguments.nodes[0]!;
+    // Object.defineProperty/defineProperties over a standard-library prototype
+    // value: a typed Date never observes a dynamic definition there, so the
+    // write keeps the fence it reached before the value existed. The
+    // descriptor READ below is not a write and stays open.
+    if (member === "defineProperty") fenceDatePrototypeWriteCall(lowerer, targetNode);
+    let target = tryLowerExpression(lowerer, targetNode);
     // The checker gives C.prototype the instance type, but its lowered
     // value is the shared prototype table, not an instance to unbox.
     const prototypeTarget =
@@ -8939,6 +8948,10 @@ function lowerObjectStaticCall(
     call.arguments.nodes.length === 2 &&
     !call.arguments.nodes.some((a) => ts.isSpreadElement(a))
   ) {
+    // A standard-library prototype value as the target is a write through it,
+    // exactly like the defineProperty form above: a typed Date never observes
+    // a definition made on the dynamic prototype object.
+    fenceDatePrototypeWriteCall(lowerer, call.arguments.nodes[0]!);
     const prototype = lowerClassPrototypeDescriptors(lowerer, call, member);
     if (prototype) return prototype;
     let target = tryLowerExpression(lowerer, call.arguments.nodes[0]!);

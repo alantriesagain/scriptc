@@ -1663,6 +1663,11 @@ ScrDyn *scr_dyn_reflect_apply(ScrDyn *target, ScrDyn *receiver, ScrDyn *argument
 ScrDyn *scr_dyn_apply_array_like(const ScrDyn *target, const ScrDyn *receiver, const ScrDyn *arguments, const char *what);
 bool scr_dyn_same_value(const ScrDyn *left, const ScrDyn *right);
 ScrDyn *scr_dyn_builtin_method(const ScrStr *prototype, const ScrStr *method);
+/* A standard library prototype object as a value — `Date.prototype` read in
+ * a JavaScript source (+1, one object per thread; the constructor's
+ * `prototype` is the same object). Named by the constructor whose interface
+ * it carries; dyn.stdlibPrototype's implementation. */
+ScrDyn *scr_dyn_stdlib_prototype(const ScrStr *name);
 ScrStr *scr_dyn_to_string_argument(const ScrDyn *d, const ScrDyn *argument, const ScrStr *what);
 ScrDyn *scr_dyn_value_of(const ScrDyn *d, const ScrStr *what);
 ScrStr *scr_dyn_error_string(const ScrDyn *d);

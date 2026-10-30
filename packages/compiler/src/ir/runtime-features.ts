@@ -336,6 +336,7 @@ const DYN_INVOKE_LIB_FNS: ReadonlySet<IrLibFn> = new Set([
   "dyn.arrayPrototype",
   "dyn.builtinFunction",
   "dyn.builtinMethod",
+  "dyn.stdlibPrototype",
   "dyn.defineProperty",
   "child.propsDefine",
   "dyn.defineProps",
@@ -1074,6 +1075,9 @@ const RUNTIME_FEATURE_RULES = {
    * half (scr_dyn_builtin_stream.c): native stream state for constructor
    * functions, over the stream unit. */
   dynBuiltinStream: rule({ fns: ["dyn.builtinStreamClass"] }),
+  /** A standard library prototype object read as a value in a JavaScript
+   * source (scr_dyn_stdlib_prototype.c): `Date.prototype`. */
+  stdlibPrototypeValue: rule({ fns: ["dyn.stdlibPrototype"] }),
   /** Array.prototype's generic algorithms over array-like receivers
    * (scr_dyn_array_like.c), which delegates every other name to the
    * dyn-invoke unit's array dispatch. */
@@ -1478,6 +1482,7 @@ function noRuntimeFeatures(): RuntimeFeatures {
     dynAsync: false,
     dynBuiltinClass: false,
     dynBuiltinStream: false,
+    stdlibPrototypeValue: false,
     dynInvoke: false,
     arrayLikeDispatch: false,
     builtinPrototypeValue: false,

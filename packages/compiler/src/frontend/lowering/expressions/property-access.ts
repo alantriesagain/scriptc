@@ -1924,6 +1924,97 @@ function importMetaProperty(lowerer: Lowerer, expr: ts.PropertyAccessExpression)
   return isImportMeta(expr.expression) ? importMetaField(lowerer, expr, expr.name.text) : null;
 }
 
+const DATE_PROTOTYPE_WRITE_MESSAGE =
+  "writing through a standard library prototype (`Date.prototype` is a value for reads; a Date never observes a write to it)";
+
+/** How many member steps separate `node` from `Date.prototype` in the read
+ * chain `node` is part of: 0 for `Date.prototype` itself, 1 for a member, 2
+ * for a property read on a member (the interned function object). Null when
+ * the chain is not rooted at `Date.prototype`. */
+function datePrototypeDepth(lowerer: Lowerer, node: ts.Expression): number | null {
+  let depth = 0;
+  let cur: ts.Expression = node;
+  for (;;) {
+    if (
+      ts.isPropertyAccessExpression(cur) &&
+      lowerer.stdlibGlobalMember(cur, "Date") === "prototype"
+    )
+      return depth;
+    if (ts.isPropertyAccessExpression(cur) || ts.isElementAccessExpression(cur)) {
+      cur = cur.expression;
+      depth++;
+      continue;
+    }
+    return null;
+  }
+}
+
+/** The prototype object and its members are a read surface: a write that
+ * replaces a member, or a key of the prototype itself, keeps the SC1090
+ * refusal it reached before the prototype had a value, because a typed Date
+ * never observes it and the write would silently differ from Node. A property
+ * OF a member (the interned function object, `Date.prototype.getTime.length
+ * = 1`) writes the function the dynamic tier shares with Node, which matches,
+ * so it stays open. True when `node` is the target of such a write
+ * (assignment, compound assignment, `delete`, `++`/`--`), directly or as the
+ * base of the target's member chain. */
+export function isDatePrototypeWrite(lowerer: Lowerer, node: ts.Expression): boolean {
+  const depth = datePrototypeDepth(lowerer, node);
+  if (depth === null) return false;
+  let steps = 0;
+  let cur: ts.Node = node;
+  for (;;) {
+    while (ts.isParenthesizedExpression(cur.parent)) cur = cur.parent;
+    const parent = cur.parent;
+    if (!parent) return false;
+    if (
+      (ts.isPropertyAccessExpression(parent) || ts.isElementAccessExpression(parent)) &&
+      parent.expression === cur
+    ) {
+      cur = parent;
+      steps++;
+      continue;
+    }
+    const written =
+      (ts.isBinaryExpression(parent) &&
+        parent.left === cur &&
+        (parent.operatorToken.kind === ts.SyntaxKind.EqualsToken ||
+          (parent.operatorToken.kind >= ts.SyntaxKind.FirstCompoundAssignment &&
+            parent.operatorToken.kind <= ts.SyntaxKind.LastCompoundAssignment))) ||
+      ts.isDeleteExpression(parent) ||
+      // `++`/`--` write their operand; the other prefix unary forms (`!`,
+      // `typeof`, `void`, `+`, `-`, `~`) only read it.
+      ((ts.isPrefixUnaryExpression(parent) || ts.isPostfixUnaryExpression(parent)) &&
+        (parent.operator === ts.SyntaxKind.PlusPlusToken ||
+          parent.operator === ts.SyntaxKind.MinusMinusToken));
+    return written && depth + steps <= 1;
+  }
+}
+
+/** The fence for a write found while lowering a property access (see
+ * isDatePrototypeWrite). The cheap syntactic pre-test keeps every other
+ * property access down to one identifier comparison: only a chain rooted at
+ * the `Date` global can name the prototype, and the write path reaches this
+ * before chainBlocked's early return. */
+export function fenceDatePrototypeWrite(lowerer: Lowerer, expr: ts.Expression): void {
+  let root: ts.Expression = expr;
+  while (ts.isPropertyAccessExpression(root) || ts.isElementAccessExpression(root))
+    root = root.expression;
+  while (ts.isParenthesizedExpression(root)) root = root.expression;
+  if (!ts.isIdentifier(root) || root.text !== "Date") return;
+  if (isDatePrototypeWrite(lowerer, expr))
+    lowerer.unsupported("SC1090", expr, DATE_PROTOTYPE_WRITE_MESSAGE);
+}
+
+/** The same fence for a call-shaped write (`Object.defineProperty`,
+ * `Object.assign`) whose target argument is `Date.prototype` or one of its
+ * members. */
+export function fenceDatePrototypeWriteCall(lowerer: Lowerer, node: ts.Expression): void {
+  const depth = datePrototypeDepth(lowerer, node);
+  if (depth !== null && depth <= 1)
+    lowerer.unsupported("SC1090", node, DATE_PROTOTYPE_WRITE_MESSAGE);
+}
+
 /** The TypeError of a deferred-init field read that finds the field
  * unassigned where its declared type cannot hold undefined. */
 export const DEFERRED_READ_MESSAGE =
@@ -2032,6 +2123,11 @@ export function lowerIntrinsicProperty(
   }
   if (lowerer.stdlibGlobalMember(expr, "Reflect") === "ownKeys")
     return reflectMemberValue(lowerer, "ownKeys", locOf(expr));
+  // A write, `delete` or defineProperty through `Date.prototype` keeps its
+  // fence: the value below is a read surface, and a typed Date never observes
+  // a dynamic write to it. This runs before the chainBlocked early return
+  // because a write lowers the prototype read with the chain blocked.
+  fenceDatePrototypeWrite(lowerer, expr);
   if (lowerer.chainBlocked(expr)) return null;
   // Object.prototype.constructor: the Object constructor value.
   if (
@@ -2080,6 +2176,39 @@ export function lowerIntrinsicProperty(
     return { kind: "libCall", fn: "dyn.functionApply", args: [], type: DYN, loc: locOf(expr) };
   if (lowerer.stdlibGlobalMember(expr, "Array") === "prototype")
     return { kind: "libCall", fn: "dyn.arrayPrototype", args: [], type: DYN, loc: locOf(expr) };
+  // Date.prototype as a value, and its members read through it: the
+  // prototype object the language defines (an ordinary object carrying the
+  // interface's methods), not a Date. `Date.prototype.hasOwnProperty("x")`
+  // and `Date.prototype.getTime` are reads of that object; a Date method
+  // CALLED on it is a TypeError, which the checked-dynamic method dispatch
+  // answers because the receiver is not a Date handle.
+  if (lowerer.stdlibGlobalMember(expr, "Date") === "prototype") {
+    return {
+      kind: "libCall",
+      fn: "dyn.stdlibPrototype",
+      args: [{ kind: "strLit", value: "Date", type: STRING, loc: locOf(expr) }],
+      type: DYN,
+      loc: locOf(expr),
+    };
+  }
+  if (
+    ts.isPropertyAccessExpression(expr.expression) &&
+    lowerer.stdlibGlobalMember(expr.expression, "Date") === "prototype"
+  ) {
+    return {
+      kind: "dynKeyGet",
+      value: {
+        kind: "libCall",
+        fn: "dyn.stdlibPrototype",
+        args: [{ kind: "strLit", value: "Date", type: STRING, loc: locOf(expr.expression) }],
+        type: DYN,
+        loc: locOf(expr.expression),
+      },
+      key: { kind: "strLit", value: expr.name.text, type: STRING, loc: locOf(expr.name) },
+      type: DYN,
+      loc: locOf(expr),
+    };
+  }
   if (lowerer.stdlibGlobalMember(expr, "Object") === "prototype")
     return { kind: "libCall", fn: "dyn.objectPrototype", args: [], type: DYN, loc: locOf(expr) };
   // Error.prototype as a value (`F.prototype = Object.create(Error.prototype)`)

@@ -161,6 +161,9 @@ export interface CcOptions {
   computedRequire?: boolean;
   /** Builtin functions read as values: compiles scr_builtin_values.c. */
   builtinValues?: boolean;
+  /** A standard library prototype object read as a value in a JavaScript
+   * source (`Date.prototype`): compiles scr_dyn_stdlib_prototype.c. */
+  stdlibPrototypeValue?: boolean;
   /** An Array.prototype method runs over an array-like receiver:
    * compiles scr_dyn_array_like.c, which the dyn-invoke unit's array
    * dispatch calls for receivers that are not arrays. */
