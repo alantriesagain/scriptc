@@ -1555,6 +1555,8 @@ export const LIB_FN_SYMS: Record<string, string> = {
   "http.reqHttpVersionMajor": "scr_http_req_http_version_major",
   "http.reqHttpVersionMinor": "scr_http_req_http_version_minor",
   "http.reqAborted": "scr_http_req_aborted_flag",
+  "http.reqDestroyed": "scr_http_req_destroyed_flag",
+  "http.resDestroyed": "scr_http_res_destroyed_flag",
   "http.reqComplete": "scr_http_req_complete",
   "http.reqSocket": "scr_http_req_socket",
   "http.reqRawHeaders": "scr_http_req_raw_headers",
