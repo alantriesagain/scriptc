@@ -3528,7 +3528,7 @@ function validateFunction(
         if (e.type.kind !== "dyn") err(`dynCall must be dyn-typed, got ${e.type.kind}`, e.loc);
         for (const a of e.args) {
           checkExpr(a);
-          if (a.type.kind !== "dyn")
+          if (a.type.kind !== "dyn" && !(a.type.kind === "jsval" && e.spreads === undefined))
             err(`dynCall argument of kind ${a.type.kind} (must be dyn)`, e.loc);
         }
         // The runtime-arity form: spread entries point into args (their
@@ -3556,7 +3556,7 @@ function validateFunction(
         if (e.type.kind !== "dyn") err(`dynInvoke must be dyn-typed, got ${e.type.kind}`, e.loc);
         for (const a of e.args) {
           checkExpr(a);
-          if (a.type.kind !== "dyn")
+          if (a.type.kind !== "dyn" && a.type.kind !== "jsval")
             err(`dynInvoke argument of kind ${a.type.kind} (must be dyn)`, e.loc);
         }
         break;
@@ -4189,7 +4189,14 @@ function validateFunction(
       e.fn === "readable.unpipe" ||
       e.fn === "rl.create" ||
       e.fn === "rl.createSignal";
-    if (variadic ? e.args.length < sig.argTypes.length : e.args.length !== sig.argTypes.length) {
+    // fs.unwatchFile's listener is optional, so its last slot may be
+    // omitted (1 or 2 args) rather than extended.
+    const optionalTail = e.fn === "fs.unwatchFile" ? 1 : 0;
+    const arityOk = variadic
+      ? e.args.length >= sig.argTypes.length
+      : e.args.length === sig.argTypes.length ||
+        (optionalTail > 0 && e.args.length === sig.argTypes.length - optionalTail);
+    if (!arityOk) {
       err(`libCall ${e.fn}: ${e.args.length} args, expected ${sig.argTypes.length}`, e.loc);
     }
     e.args.forEach((a, i) => {
@@ -6317,6 +6324,37 @@ function validateFunction(
           !handleOk
         ) {
           err(`dynCheck against non-JSON-representable type ${e.type.kind}`, e.loc);
+        }
+        if (e.partialView === true) {
+          // A partial record assertion (record-views.ts): the operand is a
+          // live record whose fields are a SUBSET of the target's, with
+          // equal types, so the view lacks only properties the record
+          // never had.
+          if (
+            e.type.kind !== "record" ||
+            e.value.kind !== "dynFrom" ||
+            e.value.liveRef !== true ||
+            e.value.value.type.kind !== "record"
+          ) {
+            err(`partialView dynCheck needs a live-record operand and a record target`, e.loc);
+            break;
+          }
+          const target = records.get(e.type.shapeId);
+          const source = records.get(e.value.value.type.shapeId);
+          if (!target || !source) {
+            err(`partialView dynCheck names an unknown record shape`, e.loc);
+            break;
+          }
+          for (const field of source.fields) {
+            const found = target.fields.find((f) => f.name === field.name);
+            if (!found || typeKey(found.type) !== typeKey(field.type)) {
+              err(
+                `partialView source field "${field.name}" is not a target field with an equal type`,
+                e.loc,
+              );
+              break;
+            }
+          }
         }
         break;
       }
