@@ -68,6 +68,7 @@ export interface EarlyExecutableNativeFeatures {
   nodeIsland?: boolean;
   moduleNamespace?: boolean;
   moduleNamespaceDyn?: boolean;
+  primitiveWrapper?: boolean;
   zlib: boolean;
   brotli?: boolean;
   assert: boolean;
@@ -111,6 +112,7 @@ export interface EarlyExecutableNativeFeatures {
   dgramDyn: boolean;
   textCodecDyn: boolean;
   watch: boolean;
+  watchFile: boolean;
   foreignFfi: boolean;
   nodeTest: boolean;
   tls: boolean;
@@ -299,6 +301,7 @@ const BOOLEAN_NATIVE_KEYS = [
   "dgramDyn",
   "textCodecDyn",
   "watch",
+  "watchFile",
   "foreignFfi",
   "nodeTest",
   "tls",

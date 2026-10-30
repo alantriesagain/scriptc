@@ -43,6 +43,9 @@ export interface NativeLinkFeatures {
   /** A module namespace boxed for typed code links
    * scr_module_namespace_dyn.c; absent (false) otherwise. */
   moduleNamespaceDyn?: boolean;
+  /** Primitive wrapper objects link scr_js_wrapper.c; absent (false)
+   * otherwise. */
+  primitiveWrapper?: boolean;
   zlib: boolean;
   /** node:zlib's Brotli forms: scr_brotli.c and the vendored brotli archive. */
   brotli?: boolean;
@@ -120,6 +123,8 @@ export interface NativeLinkFeatures {
    * scr_text_codec_dyn.c. */
   textCodecDyn: boolean;
   watch: boolean;
+  /** fs.watchFile/fs.unwatchFile: scr_watch_file.c. */
+  watchFile: boolean;
   foreignFfi: boolean;
   nodeTest: boolean;
   tls: boolean;

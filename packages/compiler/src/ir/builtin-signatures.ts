@@ -806,17 +806,28 @@ function buildLibFnSignatures() {
      * value: path and options arrive unchecked; the result is a string or a
      * Buffer by the options' encoding. */
     "fs.realpathValue": { argTypes: [DYN, DYN, BOOL], result: DYN },
+    // Builtin functions read as values: validateString under Node's argument
+    // name, and node:path's value adapters (scr_builtin_values.c).
+    "dyn.validateString": { argTypes: [DYN, STRING], result: STRING },
+    "dyn.validateStrings": { argTypes: [DYN, STRING], result: arrayOf(STRING) },
+    "path.resolveValue": { argTypes: [DYN, BOOL], result: STRING },
+    "path.parseValue": { argTypes: [DYN, BOOL], result: DYN },
+    "path.formatValue": { argTypes: [DYN, BOOL], result: DYN },
+    "path.toNamespacedValue": { argTypes: [DYN, BOOL], result: DYN },
     /** Native realpath with syscall "realpath" on failure. +1 fresh string. */
     "fs.realpathNativeSync": { argTypes: [STRING], result: STRING },
-    /** The os.userInfo() field trio (uv_os_get_passwd's slices): pw_name,
-     * pw_shell, pw_dir — the PASSWD homedir, not os.homedir's $HOME-first
-     * cascade (Node's own split). The frontend assembles the UserInfo
-     * record from these plus getuid/getgid. +1 fresh strings; a passwd
-     * lookup failure aborts (Node throws a system error there — no
-     * compiled program path reaches it for the running uid). */
+    /** The os.userInfo() fields (uv_os_get_passwd's slices of the passwd
+     * entry for the effective uid): pw_name, pw_shell, pw_dir — the PASSWD
+     * homedir, not os.homedir's $HOME-first cascade (Node's own split) —
+     * and pw_uid, pw_gid (-1 on Windows). The frontend assembles the
+     * UserInfo record from these. +1 fresh strings; a passwd lookup
+     * failure aborts (Node throws a system error there — no compiled
+     * program path reaches it for the running uid). */
     "os.userName": { argTypes: [], result: STRING },
     "os.userShell": { argTypes: [], result: STRING },
     "os.userHomedir": { argTypes: [], result: STRING },
+    "os.userUid": { argTypes: [], result: F64 },
+    "os.userGid": { argTypes: [], result: F64 },
     "os.tmpdir": { argTypes: [], result: STRING },
     // Result is the call site's Dict<NetworkInterfaceInfo[]> record (VOID is
     // the dgram.address sentinel — the libCall case checks the structure).
@@ -1308,6 +1319,23 @@ function buildLibFnSignatures() {
     "fs.watch": { argTypes: [STRING], result: FSWATCHER_T },
     "fs.watchCb": { argTypes: [STRING, null], result: FSWATCHER_T },
     "watcher.close": { argTypes: [FSWATCHER_T], result: VOID },
+    // FSWatcher's EventEmitter surface: (receiver, event code, once|prepend
+    // flags, listener) for on/once/addListener/prependListener/
+    // prependOnceListener, and (receiver, event code, listener) for
+    // off/removeListener. The listener's func type is program-dependent;
+    // the null slot pins the arity and the receiver.
+    "watcher.on": { argTypes: [FSWATCHER_T, F64, F64, null], result: VOID },
+    "watcher.off": { argTypes: [FSWATCHER_T, F64, null], result: VOID },
+    /** fs.watchFile(path, interval, persistent, listener) → void
+     * (scr_watch_file.c — its own gated unit; moduleUsesFsWatchFile is the
+     * switch, and scr_watch_file_install() is emitted with it). One
+     * libuv-shaped stat poller per RESOLVED path, shared by every listener
+     * on it; the listener's (current, previous) Stats func type is
+     * program-dependent, so the slot pins the arity. Statement position
+     * only (Node returns a StatWatcher). fs.unwatchFile(path[, listener])
+     * takes a borrowed listener; the null slot is the absent one. */
+    "fs.watchFile": { argTypes: [STRING, F64, BOOL, null], result: VOID },
+    "fs.unwatchFile": { argTypes: [STRING, null], result: VOID },
     /** The composed `new crypto.X509Certificate(data).fingerprint` read
      * (scr_lib.c — no certificate handle exists): the SHA-1 of the DER,
      * uppercase colon-separated, over PEM or raw-DER Buffer input; other
@@ -3672,6 +3700,7 @@ function buildLibFnSignatures() {
     "process.versions": { argTypes: [], result: DYN },
     "process.builtinId": { argTypes: [DYN, arrayOf(STRING)], result: STRING },
     "process.builtinModule": { argTypes: [STRING, DYN], result: DYN },
+    "process.builtinObject": { argTypes: [STRING, DYN, arrayOf(STRING)], result: DYN },
     "process.builtinUnsupported": { argTypes: [STRING, STRING], result: DYN },
     /** A module namespace object as a checked-dynamic value
      * (scr_module_namespace_value): the module id, its sorted export names
@@ -3682,6 +3711,33 @@ function buildLibFnSignatures() {
      * names, the compiled getter, and the Symbol.toStringTag key. Draws
      * Node's frozen null-prototype object, one per module. Never throws. */
     "module.namespaceDyn": { argTypes: [STRING, arrayOf(STRING), DYN, DYN], result: DYN },
+    /** A primitive wrapper object (scr_js_wrapper_new): the kind
+     * (0 String, 1 Number, 2 Boolean), the value it converts, and the three
+     * constructor values for the prototypes' `constructor`. */
+    "wrapper.new": { argTypes: [F64, DYN, DYN, DYN, DYN], result: DYN },
+    /** ToObject (scr_js_wrapper_to_object): a wrapper for a primitive, the
+     * value for an object, a fresh object for null/undefined; then the
+     * three constructor values. */
+    "wrapper.toObject": { argTypes: [DYN, DYN, DYN, DYN], result: DYN },
+    /** `value instanceof String/Number/Boolean` (scr_js_wrapper_instance_of):
+     * the kind's prototype on the value's chain. */
+    "wrapper.instanceOf": { argTypes: [DYN, F64], result: BOOL },
+    /** Object.prototype.toString with the [[PrimitiveValue]] brands
+     * (scr_js_wrapper_object_tag); dyn.objectTag otherwise. */
+    "wrapper.objectTag": { argTypes: [DYN], result: STRING },
+    /** util.types brands that read the slot (scr_js_wrapper_type_is). */
+    "wrapper.typeIs": { argTypes: [DYN, STRING], result: BOOL },
+    /** The value unchanged, or the not-supported Error when its own data
+     * graph holds a wrapper (scr_js_wrapper_guard; the string names the
+     * consumer). guardList checks each element. */
+    "wrapper.guard": { argTypes: [DYN, STRING], result: DYN },
+    "wrapper.guardList": { argTypes: [arrayOf(DYN), STRING], result: arrayOf(DYN) },
+    /** Whether a member value a call read as `name` is the builtin
+     * String.prototype method of that name (scr_js_wrapper_is_string_method),
+     * and the method's receiver, ToString of the value
+     * (scr_js_wrapper_this_string). */
+    "wrapper.isStringMethod": { argTypes: [DYN, STRING], result: BOOL },
+    "wrapper.thisString": { argTypes: [DYN, STRING], result: DYN },
     "fs.callbackValue": { argTypes: [STRING], result: DYN },
     "fs.callbackCall": { argTypes: [STRING, DYN], result: DYN },
     "process.hrtimeValue": { argTypes: [], result: DYN },

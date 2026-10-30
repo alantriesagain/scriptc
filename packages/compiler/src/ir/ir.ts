@@ -1964,14 +1964,10 @@ export interface IrFunction {
   /** Original TS name (mangling is a backend concern). Lifted lambdas get
    * synthetic '%'-prefixed names ('%' can't appear in a TS identifier). */
   name: string;
-  /** Generated reflection dispatch contains speculative source-member edges.
-   * Target-only host operations behind those edges retain runtime refusals. */
-  speculativeDispatch?: boolean;
-  /** A read helper the backend can answer directly for dyn arrays and live
-   * array capsules, calling the helper only when that read has no answer.
-   * `index`: a computed read `(value, key)` whose callers pass a number
-   * converted to a string as the key. */
-  fastRead?: "index";
+  /** Source function name for native error stack frames. */
+  sourceName?: string;
+  /** Ordinary authored function declarations/expressions own a prototype. */
+  ownsPrototype?: true;
   params: IrParam[];
   returnType: IrType;
   /** All locals including params, pre-collected and scope-flat: ids are
@@ -1986,22 +1982,29 @@ export interface IrFunction {
    * their first (`this`) parameter. The slot indexes the class object's
    * capture array; no closure parameter is added to the method ABI. */
   classCaptures?: (IrParam & { slot: number })[];
+  body: IrStmt[];
+  loc: SrcLoc;
+  /** The function's execution tier (ir/tiers.ts). Absent means static: the
+   * function may use dynamic values only through boundary operations
+   * (dynFrom, dynCheck, kind tests) and moves, which the validator enforces
+   * (invariant I1). "dynamic" admits the dynamic operation vocabulary
+   * (dynKeyGet, dynCall, dyn.* builtins, ...). Lowering assigns the field
+   * from the body (assignLegacyTiers); stage S2 of the two-tier design
+   * keeps it out of serialized IR, so loaders derive it again. */
+  tier?: "dynamic";
+  /** Generated reflection dispatch contains speculative source-member edges.
+   * Target-only host operations behind those edges retain runtime refusals. */
+  speculativeDispatch?: boolean;
+  /** A read helper the backend can answer directly for dyn arrays and live
+   * array capsules, calling the helper only when that read has no answer.
+   * `index`: a computed read `(value, key)` whose callers pass a number
+   * converted to a string as the key. */
+  fastRead?: "index";
   /** Async: the body runs on a fiber; `returnType` is the INNER type T (a
    * `return v` fulfills with v) while ordinary call sites receive
    * Promise<T>. With `generator` present, call sites receive the lazy
    * async-generator object instead. */
   async?: true;
-  /** Async module initializers only: a module-global Promise<T> slot where
-   * the spawn wrapper caches its first evaluation promise. Every later
-   * static/dynamic import receives that same promise, including while the
-   * first evaluation is suspended. */
-  asyncCacheGlobal?: string;
-  /** Async cyclic module initializers only: the SCC's shared Promise<T>
-   * slot. Eager recursive spawning writes member promises from the inside
-   * out, so the member that actually initiated evaluation writes last and
-   * becomes the runtime cycle root. Dynamic imports wait on this shared
-   * completion verdict instead of a build-time-selected member. */
-  asyncCycleCacheGlobal?: string;
   /** Generator (`function*` / `async function*`): the body runs on a fiber created SUSPENDED
    * (nothing runs until the first `.next()`; backends may instead compile a
    * synchronous body as a stackless coroutine with the same protocol); `returnType` is the
@@ -2030,20 +2033,17 @@ export interface IrFunction {
      * that generator's tag. */
     inheritsTag?: true;
   };
-  /** Source function name for native error stack frames. */
-  sourceName?: string;
-  /** Ordinary authored function declarations/expressions own a prototype. */
-  ownsPrototype?: true;
-  /** The function's execution tier (ir/tiers.ts). Absent means static: the
-   * function may use dynamic values only through boundary operations
-   * (dynFrom, dynCheck, kind tests) and moves, which the validator enforces
-   * (invariant I1). "dynamic" admits the dynamic operation vocabulary
-   * (dynKeyGet, dynCall, dyn.* builtins, ...). Lowering assigns the field
-   * from the body (assignLegacyTiers); stage S2 of the two-tier design
-   * keeps it out of serialized IR, so loaders derive it again. */
-  tier?: "dynamic";
-  body: IrStmt[];
-  loc: SrcLoc;
+  /** Async module initializers only: a module-global Promise<T> slot where
+   * the spawn wrapper caches its first evaluation promise. Every later
+   * static/dynamic import receives that same promise, including while the
+   * first evaluation is suspended. */
+  asyncCacheGlobal?: string;
+  /** Async cyclic module initializers only: the SCC's shared Promise<T>
+   * slot. Eager recursive spawning writes member promises from the inside
+   * out, so the member that actually initiated evaluation writes last and
+   * becomes the runtime cycle root. Dynamic imports wait on this shared
+   * completion verdict instead of a build-time-selected member. */
+  asyncCycleCacheGlobal?: string;
 }
 
 export interface IrParam {
@@ -2280,7 +2280,7 @@ export type IrStmt =
   /** A bare lexical block `{ ... }` — its own scope. `labels` makes it a
    * labeled-break target (`lbl: { ... break lbl; ... }` and the wrapper
    * the frontend puts around labeled non-loop statements). */
-  | { kind: "block"; body: IrStmt[]; labels?: string[]; loc: SrcLoc }
+  | { kind: "block"; labels?: string[]; body: IrStmt[]; loc: SrcLoc }
   /** `throw v`. Any non-void value type can be thrown; ownership of a
    * refcounted value MOVES into the runtime's exception cell. Terminates
    * the path like `return`: control unwinds to the innermost enclosing
@@ -2324,15 +2324,15 @@ export type IrStmt =
       tryBody: IrStmt[];
       catchBody: IrStmt[] | null;
       catchLocalId: string | null;
-      finallyBody: IrStmt[] | null;
-      /** Resource-management cleanup: if the guarded body and cleanup both
-       * throw, raise a SuppressedError instead of replacing the first error. */
-      suppressFinallyErrors?: true;
       /** Iterator closing: if the guarded body threw and the cleanup throws
        * too, the cleanup's error is dropped and the first one propagates.
        * After a generator .return() the cleanup's error replaces it, and on
        * normal exits it propagates. */
       dropFinallyErrors?: true;
+      finallyBody: IrStmt[] | null;
+      /** Resource-management cleanup: if the guarded body and cleanup both
+       * throw, raise a SuppressedError instead of replacing the first error. */
+      suppressFinallyErrors?: true;
       loc: SrcLoc;
     };
 
@@ -3341,7 +3341,7 @@ export type IrExpr =
    * every classRef, so a value's construct thunk always has a constructor
    * to call; backends emit class objects (and thunks) for exactly the
    * classes some classRef in the module names. */
-  | { kind: "classRef"; className: string; captures?: string[]; type: IrType; loc: SrcLoc }
+  | { kind: "classRef"; className: string; type: IrType; loc: SrcLoc; captures?: string[] }
   /** `new X(args)` through a class VALUE: call the class object's
    * construct thunk. `callee` is classval-typed; args are completed
    * against `%<callee.className>.constructor`'s ABI — sound because every
@@ -3513,13 +3513,13 @@ export type IrExpr =
   | {
       kind: "dynFrom";
       value: IrExpr;
+      type: IrType;
+      loc: SrcLoc;
+      liveRef?: true;
       fnName?: string;
       /** A boxed function's `length` when it differs from its parameter
        * count (builtin function values). */
       fnLength?: number;
-      liveRef?: true;
-      type: IrType;
-      loc: SrcLoc;
     }
   /** CALLING a dyn value — `fn(a, b)` where fn is checked-dynamic (an
    * implicit-any JS binding, a dyn record member, a dynKeyGet result).

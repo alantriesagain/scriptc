@@ -416,7 +416,9 @@ export function nodeIslandSymbols(names) {
  * and results the checker types `any`. bench/record-untyped-writes, also
  * added later, writes typed records through `unknown` and `Object.assign`
  * views. bench/layered-errors, also added later, constructs and throws
- * Error subclass instances, as bench/validate-errors does. Every other bench
+ * Error subclass instances, as bench/validate-errors does.
+ * bench/stream-buffered-drain, also added later, drains an object-mode
+ * Readable, whose chunks are checked-dynamic values. Every other bench
  * workload is fully typed and must link none. The gate and
  * tests/harness/bench-dynamic-tier.test.ts enforce that, and the test also
  * fails when a listed workload stops linking them, so remove a workload here
@@ -443,6 +445,7 @@ export const DYNAMIC_WORKLOADS = new Set([
   "bench/regex-replacers",
   "bench/record-untyped-writes",
   "bench/layered-errors",
+  "bench/stream-buffered-drain",
 ]);
 
 /** Names of the functions (text and weak symbols) in `nm` output. Mach-O

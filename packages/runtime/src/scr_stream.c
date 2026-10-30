@@ -113,8 +113,11 @@ struct ScrStreamState {
    * counts CHARS consumed of buf[0] instead of bytes. */
   struct {
     size_t hwm, length;
-    void **buf; /* queue of owned chunks; buf[0] read from head_off */
-    size_t n, cap, head_off;
+    /* queue of owned chunks: the n entries from buf[first], the first one
+     * read from head_off. Taking the head advances first instead of
+     * shifting the rest; pushes reuse the freed front slots. */
+    void **buf;
+    size_t first, n, cap, head_off;
     int flowing; /* -1 null, 0 paused, 1 flowing */
     bool reading, in_read_sync, ended, end_emitted, end_scheduled;
     bool in_read_call; /* inside the user's _read (in_read_sync also starts true) */
@@ -411,7 +414,7 @@ static void scr_stream_state_drop(ScrStreamState *st, bool gc) {
   if (!st) return;
   if (st->errored) scr_error_release(st->errored);
   if (st->native) st->native_release(st->native);
-  for (size_t i = 0; i < st->r.n; i++) {
+  for (size_t i = st->r.first; i < st->r.first + st->r.n; i++) {
     /* The collector frees the dyn entries it traced. */
     if (gc && st->r.dyn_entries && scr_stream_dyn_entry_traced(st->r.buf[i])) continue;
     scr_stream_entry_release(st, st->r.buf[i]);
@@ -467,7 +470,7 @@ void scr_stream_st_gcfree(ScrStreamState *st) { scr_stream_state_drop(st, true);
 void scr_stream_st_trace(ScrStreamState *st, ScrTraceVisit visit, void *ctx) {
   if (!st) return;
   if (st->r.dyn_entries) {
-    for (size_t i = 0; i < st->r.n; i++) {
+    for (size_t i = st->r.first; i < st->r.first + st->r.n; i++) {
       if (scr_stream_dyn_entry_traced(st->r.buf[i])) visit(st->r.buf[i], ctx);
     }
   }
@@ -752,7 +755,12 @@ static void scr_stream_do_destroy(ScrStream *s, ScrError *err /*borrowed*/);
 static void scr_stream_notify_finished(ScrStream *s);
 static void *scr_stream_read_n(ScrStream *s, double size);
 static void *scr_stream_read_n_kind(ScrStream *s, double size, ScrEntryKind *kind);
-static void scr_stream_settle_next(ScrStream *s);
+static void scr_stream_settle_next_waiter(ScrStream *s);
+/* A for-await iterator's parked next(): only a stream with a waiter that
+ * is not mid-read has anything to settle. */
+static inline void scr_stream_settle_next(ScrStream *s) {
+  if (s->st->r.next_waiter && !s->st->r.next_reading) scr_stream_settle_next_waiter(s);
+}
 static ScrStream *scr_stream_alloc(const ScrVt *vt, const char *cls, bool has_r, bool has_w,
                                     double rhwm, double whwm, bool auto_destroy,
                                     bool emit_close, bool allow_half_open);
@@ -783,33 +791,52 @@ static void scr_stream_rbuf_push(ScrStreamState *st, void *chunk /*moves*/, ScrE
     fputs("scriptc: internal error: stream buffer entry of the wrong kind\n", stderr);
     abort();
   }
-  if (st->r.n == st->r.cap) {
-    st->r.cap = st->r.cap ? st->r.cap * 2 : 4;
-    st->r.buf = realloc(st->r.buf, st->r.cap * sizeof *st->r.buf);
-    if (!st->r.buf) scr_stream_oom();
+  /* unshift: head_off must be zero (only the head entry is partially
+   * consumed, and unshift with a part-read head keeps the remainder intact
+   * by materializing it first — the caller slices). A freed front slot
+   * takes it directly. */
+  if (front && st->r.first > 0) {
+    st->r.buf[--st->r.first] = chunk;
+    st->r.n++;
+    st->r.length += scr_stream_entry_len(st, chunk);
+    return;
+  }
+  if (st->r.first + st->r.n == st->r.cap) {
+    if (st->r.first > 0 && st->r.first >= st->r.n) {
+      /* at least half the slots are free at the front: move the entries
+       * down instead of growing */
+      memmove(st->r.buf, st->r.buf + st->r.first, st->r.n * sizeof *st->r.buf);
+      st->r.first = 0;
+    } else {
+      st->r.cap = st->r.cap ? st->r.cap * 2 : 4;
+      st->r.buf = realloc(st->r.buf, st->r.cap * sizeof *st->r.buf);
+      if (!st->r.buf) scr_stream_oom();
+    }
   }
   if (front) {
-    /* unshift: head_off must be zero (only buf[0] is partially consumed,
-     * and unshift with a part-read head keeps the remainder intact by
-     * materializing it first — the caller slices). */
     memmove(st->r.buf + 1, st->r.buf, st->r.n * sizeof *st->r.buf);
     st->r.buf[0] = chunk;
   } else {
-    st->r.buf[st->r.n] = chunk;
+    st->r.buf[st->r.first + st->r.n] = chunk;
   }
   st->r.n++;
   st->r.length += scr_stream_entry_len(st, chunk);
+}
+
+/* The head entry leaves the queue (its reference moves to the caller). */
+static void scr_stream_rbuf_drop_head(ScrStreamState *st) {
+  st->r.n--;
+  st->r.first = st->r.n == 0 ? 0 : st->r.first + 1;
 }
 
 /* Takes n units (n <= length; bytes, or chars once encoded) off the
  * buffer head as one +1 Buffer / string. An object-mode buffer always
  * takes one whole entry (n is 1). */
 static void *scr_stream_rbuf_take(ScrStreamState *st, size_t n) {
-  void *first = st->r.n > 0 ? st->r.buf[0] : NULL;
+  void *first = st->r.n > 0 ? st->r.buf[st->r.first] : NULL;
   if (first && st->r.head_off == 0 && scr_stream_entry_len(st, first) == n) {
     /* whole-chunk fast path: hand the buffered chunk out as-is */
-    memmove(st->r.buf, st->r.buf + 1, (st->r.n - 1) * sizeof *st->r.buf);
-    st->r.n--;
+    scr_stream_rbuf_drop_head(st);
     st->r.length -= n;
     return first;
   }
@@ -819,7 +846,7 @@ static void *scr_stream_rbuf_take(ScrStreamState *st, size_t n) {
     ScrStr *out = NULL;
     size_t at = 0;
     while (at < n) {
-      ScrStr *head = st->r.buf[0];
+      ScrStr *head = st->r.buf[st->r.first];
       size_t head_len = (size_t)scr_str_utf16_len(head);
       size_t avail = head_len - st->r.head_off;
       size_t take = avail < n - at ? avail : n - at;
@@ -836,8 +863,7 @@ static void *scr_stream_rbuf_take(ScrStreamState *st, size_t n) {
       st->r.head_off += take;
       if (st->r.head_off == head_len) {
         scr_str_release(head);
-        memmove(st->r.buf, st->r.buf + 1, (st->r.n - 1) * sizeof *st->r.buf);
-        st->r.n--;
+        scr_stream_rbuf_drop_head(st);
         st->r.head_off = 0;
       }
     }
@@ -847,7 +873,7 @@ static void *scr_stream_rbuf_take(ScrStreamState *st, size_t n) {
   ScrBytes *out = scr_stream_buffer(scr_bytes_new(SCR_BYTES_U8, (double)n));
   size_t at = 0;
   while (at < n) {
-    ScrBytes *head = st->r.buf[0];
+    ScrBytes *head = st->r.buf[st->r.first];
     size_t avail = head->len - st->r.head_off;
     size_t take = avail < n - at ? avail : n - at;
     scr_bytes_read(head, st->r.head_off, out->data + at, take);
@@ -855,8 +881,7 @@ static void *scr_stream_rbuf_take(ScrStreamState *st, size_t n) {
     st->r.head_off += take;
     if (st->r.head_off == head->len) {
       scr_bytes_release(head);
-      memmove(st->r.buf, st->r.buf + 1, (st->r.n - 1) * sizeof *st->r.buf);
-      st->r.n--;
+      scr_stream_rbuf_drop_head(st);
       st->r.head_off = 0;
     }
   }
@@ -989,7 +1014,12 @@ static void scr_stream_call_read(ScrStream *s) {
  * multi-byte tail held pending) adds nothing but still clears the
  * reading flag. */
 static int scr_stream_add_entry(ScrStream *s, void *entry /*moves*/, ScrEntryKind kind);
-static void *scr_stream_entry_convert(ScrStreamState *st, void *entry, ScrEntryKind *kind);
+static void *scr_stream_entry_convert_kind(ScrStreamState *st, void *entry, ScrEntryKind *kind);
+/* An entry already of the buffer's kind is kept as-is. */
+static inline void *scr_stream_entry_convert(ScrStreamState *st, void *entry, ScrEntryKind *kind) {
+  if (*kind == scr_stream_rkind(st)) return entry;
+  return scr_stream_entry_convert_kind(st, entry, kind);
+}
 
 static bool scr_stream_add_chunk(ScrStream *s, ScrBytes *chunk, bool front) {
   ScrStreamState *st = s->st;
@@ -1112,7 +1142,7 @@ static void *scr_stream_read_n_kind(ScrStream *s, double size, ScrEntryKind *kin
     want = st->r.length > 0 && (absent || n > 0) ? 1 : 0;
   } else if (absent) {
     want = st->r.flowing == 1 && st->r.n > 0
-        ? scr_stream_entry_len(st, st->r.buf[0]) - st->r.head_off
+        ? scr_stream_entry_len(st, st->r.buf[st->r.first]) - st->r.head_off
         : st->r.length;
   } else {
     want = n <= st->r.length ? n : (st->r.ended ? st->r.length : 0);
@@ -1136,7 +1166,7 @@ static void *scr_stream_read_n_kind(ScrStream *s, double size, ScrEntryKind *kin
         want = st->r.length > 0 && (absent || n > 0) ? 1 : 0;
       } else if (absent) {
         want = st->r.flowing == 1 && st->r.n > 0
-            ? scr_stream_entry_len(st, st->r.buf[0]) - st->r.head_off
+            ? scr_stream_entry_len(st, st->r.buf[st->r.first]) - st->r.head_off
             : st->r.length;
       } else {
         want = n <= st->r.length ? n : (st->r.ended ? st->r.length : 0);
@@ -1395,8 +1425,6 @@ static void scr_stream_next_fulfill(ScrStreamState *st, ScrPromise *w /*moves*/,
   scr_queue_microtask(job);
 }
 
-static void scr_stream_settle_next(ScrStream *s);
-
 /* One pass of createAsyncIterator's loop for the parked waiter:
  * `stream.read()` (a _read below the hwm, then the buffered chunk; pushes
  * the _read makes join it), else the settled states (error, EOF), else
@@ -1442,7 +1470,7 @@ static void scr_stream_next_wake_job(ScrClosure *job) {
  * error rejects, buffered content fulfills (one whole entry in from
  * mode, the whole buffer otherwise — Node's iterator read()), EOF
  * fulfills the sentinel. Called from push/eof/destroy transitions. */
-static void scr_stream_settle_next(ScrStream *s) {
+static void scr_stream_settle_next_waiter(ScrStream *s) {
   ScrStreamState *st = s->st;
   if (!st->r.next_waiter || st->r.next_reading) return;
   if (st->errored && !st->error_emitted) {
@@ -1955,7 +1983,8 @@ ScrStream *scr_stream_new_object_readable(ScrClosure *read, ScrStreamReadInv rea
  * is boxed. */
 static void scr_stream_rbuf_to_dyn(ScrStreamState *st) {
   ScrEntryKind kind = scr_stream_rkind(st);
-  for (size_t i = 0; i < st->r.n; i++) st->r.buf[i] = scr_stream_entry_box(st->r.buf[i], kind);
+  for (size_t i = st->r.first; i < st->r.first + st->r.n; i++)
+    st->r.buf[i] = scr_stream_entry_box(st->r.buf[i], kind);
   st->r.dyn_entries = true;
   st->r.object_kind_set = true;
 }
@@ -1964,7 +1993,7 @@ static void scr_stream_rbuf_to_dyn(ScrStreamState *st) {
  * A Buffer on a stream with a decoder decodes through it (Node's
  * decoder.write in readableAddChunkPushObjectMode); an entry of another
  * kind turns the buffer into dyn entries. */
-static void *scr_stream_entry_convert(ScrStreamState *st, void *entry, ScrEntryKind *kind) {
+static void *scr_stream_entry_convert_kind(ScrStreamState *st, void *entry, ScrEntryKind *kind) {
   ScrEntryKind want = scr_stream_rkind(st);
   if (*kind == want) return entry;
   if (*kind == SCR_ENTRY_BYTES && want == SCR_ENTRY_STR && st->r.decoding) {
@@ -2390,7 +2419,7 @@ static void scr_stream_writev_batch(ScrStream *s) {
 }
 
 /* The buffered writes, one at a time (Node's clearBuffer without _writev). */
-static void scr_stream_clear_buffer_each(ScrStream *s) {
+static void scr_stream_clear_buffer_entries(ScrStream *s) {
   ScrStreamState *st = s->st;
   if (st->w.buffer_processing) return;
   st->w.buffer_processing = true;
@@ -2410,6 +2439,12 @@ static void scr_stream_clear_buffer_each(ScrStream *s) {
     scr_stream_do_write(s, e.chunk, e.cb, e.enc);
   }
   st->w.buffer_processing = false;
+}
+
+/* An empty write queue has nothing to clear. */
+static inline void scr_stream_clear_buffer_each(ScrStream *s) {
+  ScrStreamState *st = s->st;
+  if (st->w.head < st->w.n) scr_stream_clear_buffer_entries(s);
 }
 
 /* The fs streams' clearBuffer: nothing while constructing, and _writev
@@ -6698,6 +6733,10 @@ ScrDyn *scr_stream_chunk_encoding_value(ScrStream *s) {
   return enc ? scr_dyn_retain(enc) : scr_dyn_undefined();
 }
 
+bool scr_stream_chunk_encoding_undefined(ScrStream *s) {
+  return scr_stream_writes_values(s) && s->st->w.cur_enc == NULL;
+}
+
 /* ── the readable surface ─────────────────────────────────────────────── */
 
 bool scr_stream_push(ScrStream *s, ScrBytes *chunk) {
@@ -6804,7 +6843,7 @@ void scr_stream_unshift(ScrStream *s, ScrBytes *chunk) {
   ScrStreamState *st = s->st;
   if (st->r.head_off > 0) {
     /* materialize the part-read head so the front slot is whole */
-    void *rest = scr_stream_rbuf_take(st, scr_stream_entry_len(st, st->r.buf[0]) - st->r.head_off);
+    void *rest = scr_stream_rbuf_take(st, scr_stream_entry_len(st, st->r.buf[st->r.first]) - st->r.head_off);
     scr_stream_rbuf_push(st, rest, scr_stream_rkind(st), true);
   }
   scr_stream_add_chunk(s, chunk, true);
@@ -7007,9 +7046,9 @@ ScrStream *scr_stream_set_encoding(ScrStream *s, ScrStr *enc) {
   st->r.dec_pending = 0;
   /* decode the buffered bytes into one concatenated string entry */
   ScrStr *content = NULL;
-  size_t skip = st->r.head_off; /* buf[0] may be part-read (byte offset) */
+  size_t skip = st->r.head_off; /* the head entry may be part-read (byte offset) */
   for (size_t i = 0; i < st->r.n; i++) {
-    ScrBytes *chunk = st->r.buf[i];
+    ScrBytes *chunk = st->r.buf[st->r.first + i];
     ScrBytes *view = chunk;
     if (i == 0 && skip > 0) {
       view = scr_bytes_new(SCR_BYTES_U8, (double)(chunk->len - skip));
@@ -7042,6 +7081,7 @@ ScrStream *scr_stream_set_encoding(ScrStream *s, ScrStr *enc) {
     }
   }
   st->r.n = 0;
+  st->r.first = 0;
   st->r.head_off = 0;
   st->r.length = 0;
   /* AFTER the byte-entry walk above: from here every entry is a string,

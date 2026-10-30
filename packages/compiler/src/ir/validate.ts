@@ -4197,7 +4197,14 @@ function validateFunction(
       e.fn === "readable.unpipe" ||
       e.fn === "rl.create" ||
       e.fn === "rl.createSignal";
-    if (variadic ? e.args.length < sig.argTypes.length : e.args.length !== sig.argTypes.length) {
+    // fs.unwatchFile's listener is optional, so its last slot may be
+    // omitted (1 or 2 args) rather than extended.
+    const optionalTail = e.fn === "fs.unwatchFile" ? 1 : 0;
+    const arityOk = variadic
+      ? e.args.length >= sig.argTypes.length
+      : e.args.length === sig.argTypes.length ||
+        (optionalTail > 0 && e.args.length === sig.argTypes.length - optionalTail);
+    if (!arityOk) {
       err(`libCall ${e.fn}: ${e.args.length} args, expected ${sig.argTypes.length}`, e.loc);
     }
     e.args.forEach((a, i) => {

@@ -7,8 +7,12 @@
  * Code bands:
  *   SC0xxx  preflight gates: TypeScript errors passed through (SC0001),
  *            project-config incompatibilities (SC0002), malformed imported
- *            JSON modules (SC0003), and upstream tsgo checker panics
- *            surfaced as source-anchored diagnostics (SC0004)
+ *            JSON modules (SC0003), upstream tsgo checker panics surfaced
+ *            as source-anchored diagnostics (SC0004), and the ECMAScript
+ *            early errors the checker does not model: a duplicated or
+ *            `var`-colliding lexical declaration in a block or switch
+ *            statement list (SC0005/SC0006) and a declaration where the
+ *            grammar admits only a Statement (SC0007)
  *   SC1xxx  supported-TypeScript-not-yet: valid TS outside the current subset
  *   SC2xxx  scriptc type rules (types we cannot compile yet)
  *   SC3xxx  backend/target coverage: the program is valid, but the selected
@@ -687,6 +691,11 @@ export const UNSUPPORTED: Record<string, UnsupportedEntry> = {
   // remains is `this` outside any method (top level, plain functions).
   SC1080: { feature: "'this' outside a class method", milestone: "later" },
   SC1090: { feature: "this syntax", milestone: "later" }, // generic fallback; message names the construct
+  SC1091: {
+    feature: "writing an undeclared name in a JavaScript source",
+    milestone: "later",
+    hint: "a write to an undeclared name has no native lowering: sloppy mode makes it a property on Node's global object, which a native binary has none of, and strict mode makes it throw; declare the name, or keep the module in a Node island (sloppy-mode programs route there)",
+  },
   SC1100: {
     feature: "operations on 'unknown' values",
     milestone: "later",

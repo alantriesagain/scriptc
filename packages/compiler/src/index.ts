@@ -23,6 +23,11 @@ import { checkerCacheIdentity } from "./frontend/ts7/checker-backend.js";
 import { setLibDiagnosticsStore } from "./frontend/ts7/lib-diagnostics.js";
 import { analyzeWithVerdictCache, fileVerdictStore } from "./coverage/verdict-cache.js";
 import { coverageCompilerIdentity } from "./coverage/verdict-startup.js";
+import {
+  directoryUnitStore,
+  unitReuseEnabled,
+  type UnitStore,
+} from "./frontend/lowering/unit-reuse.js";
 import { commentOnlyReplay } from "./coverage/verdict-semantic.js";
 import { llvmRefusalDiag, targetRefusalDiag } from "./backend/target-diagnostics.js";
 import type {
@@ -705,6 +710,7 @@ async function compileExecutableNative(
     ...(features.nodeIsland ? { nodeIsland: true } : {}),
     ...(features.moduleNamespace ? { moduleNamespace: true } : {}),
     ...(features.moduleNamespaceDyn ? { moduleNamespaceDyn: true } : {}),
+    ...(features.primitiveWrapper ? { primitiveWrapper: true } : {}),
     zlib: features.zlib,
     ...(features.brotli ? { brotli: true } : {}),
     assert: features.assert,
@@ -748,6 +754,7 @@ async function compileExecutableNative(
     dgramDyn: features.dgramDyn,
     textCodecDyn: features.textCodecDyn,
     watch: features.watch,
+    watchFile: features.watchFile,
     foreignFfi: features.foreignFfi,
     ...(features.workers ? { workers: true } : {}),
     ...(features.youngNursery ? { youngNursery: true } : {}),
@@ -916,6 +923,37 @@ function runtimePackDiagnostic(error: RuntimePackError, entryPath: string): ScrD
   );
 }
 
+/** The unit store of a Node-hosted build (unit-reuse.ts), keyed by the
+ * compiler, the entry, the options that reach lowering and the target
+ * platform. */
+async function nodeUnitStore(
+  entryPath: string,
+  opts: CompileRequestOptions,
+  ffi: FfiProfile | null,
+  buildPlatform: string,
+): Promise<UnitStore | null> {
+  if (!unitReuseEnabled() || provenanceSources() !== null) return null;
+  const root = await prepareBuildCacheRoot(buildCacheRoot());
+  if (root === null) return null;
+  const directory = join(root, "units-v1");
+  const implementation = await coverageCompilerIdentity(directory);
+  if (implementation === null) return null;
+  const { outPath: _outPath, outDir: _outDir, ...lowering } = opts;
+  const key = createHash("sha256")
+    .update(
+      JSON.stringify({
+        schema: 1,
+        entry: resolve(entryPath),
+        options: lowering,
+        ffi,
+        platform: buildPlatform,
+        compiler: implementation.digest,
+      }),
+    )
+    .digest("hex");
+  return directoryUnitStore(directory, key);
+}
+
 interface PreparedExecutable {
   llvmSource: LlvmInput;
   /** The kept LLVM text beside the executable, installed when the build ends. */
@@ -947,6 +985,9 @@ async function prepareExecutableInput(
     buildPlatform,
     nodeFrontend,
     timing,
+    new Map(),
+    true,
+    await nodeUnitStore(entryPath, opts, ffi, buildPlatform),
   );
   if (!prepared.ok) return prepared;
   const { mod, sourceTexts } = prepared;
