@@ -1359,20 +1359,38 @@ export function lowerObjectLiteral(
   ) {
     const own = lowerer.shapes.get(type.shapeId)!;
     const target = lowerer.shapes.get(expected.shapeId)!;
-    if (
-      !own.tuple &&
+    // The field set to compare is the LITERAL's: its checker type. The
+    // contextual type a few lines up can be wider than what the literal
+    // writes (an unannotated method checked against a generic slot's
+    // signature: `{ content, details }` under a contextual
+    // `AgentToolResult<unknown>` whose optional members the literal never
+    // mentions), and the destination still names the same fields as the
+    // literal, so the build can construct them directly. Only when the
+    // contextual build has no conversion into the destination at all: a
+    // value that converts today keeps its exact construction.
+    const ownType = lowerer.mapTypeOf(lowerer.typeOf(expr));
+    const ownChecked =
+      ownType?.kind === "record" &&
+      ownType.shapeId !== type.shapeId &&
+      lowerer.widthLiftPlan(type, expected) === null
+        ? lowerer.shapes.get(ownType.shapeId)
+        : undefined;
+    const fits = (from: IrRecordShape): boolean =>
+      !from.tuple &&
       !target.tuple &&
-      !own.indexValue &&
+      !from.indexValue &&
       !target.indexValue &&
-      !shapeHasAccessorSlots(own) &&
+      !shapeHasAccessorSlots(from) &&
       !shapeHasAccessorSlots(target) &&
       target.fields.every(
         (field) =>
-          own.fields.some((candidate) => candidate.name === field.name) ||
+          from.fields.some((candidate) => candidate.name === field.name) ||
           (field.type.kind === "union" && lowerer.armTag(field.type.unionId, UNDEFINED_T) >= 0),
       ) &&
-      own.fields.every((field) => target.fields.some((candidate) => candidate.name === field.name))
-    ) {
+      from.fields.every((field) =>
+        target.fields.some((candidate) => candidate.name === field.name),
+      );
+    if (fits(own) || (ownChecked !== undefined && fits(ownChecked))) {
       type = { kind: "record", shapeId: expected.shapeId };
     }
   }
