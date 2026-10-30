@@ -2610,14 +2610,14 @@ export function lowerElementWrite(lowerer: Lowerer, expr: ts.BinaryExpression): 
       // A key whose literal type names only declared fields of one type
       // writes the field it names. JavaScript evaluates the receiver, then
       // the key, then the value; the dispatch reads the saved receiver and
-      // key once per named field.
+      // key once per named field. Locals are saved too, because the key or
+      // the value can reassign them.
       const named =
         litKey === null ? sameTypedFieldKeys(lowerer, shape, target.argumentExpression) : null;
       if (named && !shape.fields.every((f) => typeEquals(f.type, named.fieldType))) {
         const loc = locOf(expr);
         const body: IrStmt[] = [];
         const save = (value: IrExpr, name: string): IrExpr => {
-          if (value.kind === "varRef") return value;
           const temp = lowerer.declareHiddenLocal(name, value.type);
           body.push({ kind: "varDecl", localId: temp.id, init: value, loc });
           return varRef(temp.id, temp.type, loc);

@@ -76,3 +76,23 @@ function only(s: Stats, key: "bytes"): number {
   return s[key];
 }
 console.log(only(stats[3]!, "bytes"));
+
+// A key or value that reassigns the receiver or key local: the write goes
+// to the receiver and key evaluated before them.
+let target = stats[0]!;
+let slot: Counter = "hits";
+target[slot] = ((slot = "misses"), 500);
+console.log(stats[0]!.hits, stats[0]!.misses, slot);
+target[slot] = ((target = stats[2]!), 600);
+console.log(stats[0]!.misses, stats[2]!.misses, target === stats[2]);
+function retarget(): Counter {
+  target = stats[3]!;
+  return "bytes";
+}
+target = stats[1]!;
+target[retarget()] = 700;
+console.log(stats[1]!.bytes, stats[3]!.bytes === 700);
+target = stats[0]!;
+slot = "hits";
+target[slot] += ((slot = "bytes"), (target = stats[1]!), 1);
+console.log(stats[0]!.hits, stats[0]!.bytes, stats[1]!.hits);
