@@ -97,8 +97,9 @@ export function computeImmutableFields(
  * A private store is also fresh when it is the first write to a field the
  * constructor's own class declares: no ancestor constructor can write that
  * field, nothing outside the construction can reach `this` yet, and no
- * earlier store of the body (in evaluation order) or store in a loop that
- * contains it writes the same field. Its slot still holds the value `new`
+ * earlier store of the body (in evaluation order, where every case test of
+ * a switch precedes its bodies) or store in a loop that contains it writes
+ * the same field. Its slot still holds the value `new`
  * gave it (NULL or an immortal unit), so the store has no old value to
  * release. */
 export interface ConstructionFacts {
@@ -225,6 +226,15 @@ export function computeConstructionFacts(mod: IrModule, nodes?: IrNodeIndex): Co
     const stmt = (s: IrStmt): boolean => {
       if (s.kind === "while" || s.kind === "doWhile" || s.kind === "for" || s.kind === "forOf")
         loopWrites(s);
+      if (s.kind === "switch") {
+        // Every case test can run before any body (a `default` clause runs
+        // after the tests of the cases that follow it), and the bodies run
+        // in source order.
+        expr(s.disc);
+        for (const c of s.cases) if (c.test !== null) expr(c.test);
+        for (const c of s.cases) for (const inner of c.body) stmt(inner);
+        return true;
+      }
       everyStmtChild(s, expr, stmt);
       if (s.kind === "fieldSet" && isOwn(s.obj)) {
         facts.privateStores.add(s);

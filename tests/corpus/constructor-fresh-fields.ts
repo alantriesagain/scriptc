@@ -137,6 +137,21 @@ class FailingDerived extends Base {
   }
 }
 
+class Switched {
+  label: Label | undefined;
+  constructor(kind: number) {
+    // The second case's test runs before the default body.
+    switch (kind) {
+      default:
+        this.label = new Label(`default after ${this.label?.text ?? "nothing"}`);
+        break;
+      case ((this.label = new Label("tested")), 1):
+        this.label = new Label(`one after ${this.label?.text ?? "nothing"}`);
+        break;
+    }
+  }
+}
+
 function describe(label: Label | undefined): string {
   return label === undefined ? "undefined" : label.text;
 }
@@ -186,6 +201,8 @@ for (const fail of [false, true]) {
     console.log("caught", error instanceof RangeError, (error as Error).message);
   }
 }
+
+for (const kind of [0, 1]) console.log(describe(new Switched(kind).label));
 
 let total = 0;
 for (let i = 0; i < 2000; i++) {

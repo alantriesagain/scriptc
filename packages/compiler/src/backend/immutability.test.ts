@@ -259,3 +259,26 @@ test("stores after this escapes, or into a reused receiver, are not fresh", () =
   mod.functions[0]!.body.push(call("%P.constructor", [value(obj("P"))]));
   expect(freshMarks(mod, "P")).toEqual(["~a", "~b"]);
 });
+
+test("a switch's later case tests run before its default body", () => {
+  // switch (v) { default: this.a = v; case (this.a = v, v): }
+  const test: IrExpr = {
+    kind: "seqExpr",
+    stmts: [setThis("P", "a")],
+    result: value(F64),
+    type: F64,
+    loc,
+  };
+  const choose: IrStmt = {
+    kind: "switch",
+    disc: value(F64),
+    cases: [
+      { test: null, body: [setThis("P", "a")] },
+      { test, body: [] },
+    ],
+    loc,
+  };
+  const mod = module([{ name: "P", fields: fields("a"), loc }], [ctor("P", [choose])]);
+  // freshMarks lists the default body's store first (source order).
+  expect(freshMarks(mod, "P")).toEqual(["~a", "=a"]);
+});
