@@ -5705,13 +5705,13 @@ export function lowerVarDeclList(
   const out: IrStmt[] = [];
   for (const decl of list.declarations.nodes) {
     if (ts.isArrayBindingPattern(decl.name) || ts.isObjectBindingPattern(decl.name)) {
-      // Destructuring produces nested initialization blocks; copying
-      // their captured bindings still needs a distinct head-scope plan.
-      lowerer.unsupported(
-        "SC1031",
-        decl.name,
-        "let/const destructuring in for-loop initializers (declare the pattern before the loop, or use var)",
-      );
+      // The pattern desugars to a flat statement list whose bindings are
+      // ordinary head declarations (`for (let [a, b] = xs; ...)`: `%destr`
+      // plus `a`, `b`), so the loop emitter finds them as head lets and
+      // freshens the captured ones per iteration like any other
+      // declarator (emit-statements: capturedLets).
+      out.push(...lowerer.lowerDestructuringDecl(decl, isLet));
+      continue;
     }
     const lowered = lowerer.lowerVarDecl(decl, isLet);
     if (!lowered)
