@@ -8442,8 +8442,16 @@ function lowerObjectStaticCall(
       const sProbe = tryLowerExpression(lowerer, call.arguments.nodes[1]!);
       // CHECKED-DYNAMIC target and source (the JS file-scope
       // object-literal identity story): the runtime dyn copy — own
-      // members of the source land on the target, which returns.
-      if (tProbe?.type.kind === "dyn") {
+      // members of the source land on the target, which returns. A
+      // CLASS-INSTANCE target joins them when the call's own RESULT type
+      // is checked-dynamic: that is the `C & { extra }` intersection
+      // (mapClassExpandoIntersection), whose value IS the instance, so
+      // the same dyn copy writes the expando members onto its view and
+      // answers the instance — identity and prototype intact.
+      if (
+        tProbe?.type.kind === "dyn" ||
+        (tProbe?.type.kind === "object" && lowerer.mapTypeOf(lowerer.typeOf(call))?.kind === "dyn")
+      ) {
         const loc = locOf(call);
         const target = lowerer.lowerExpr(call.arguments.nodes[0]!);
         const rawSource = lowerer.lowerExpr(call.arguments.nodes[1]!);
@@ -8453,8 +8461,10 @@ function lowerObjectStaticCall(
         if (ts.isObjectLiteralExpression(targetNode))
           fenceClassCopyIntoFreshObject(lowerer, call, call.arguments.nodes[1]!, rawSource);
         const source = lowerer.coerceToExpected(rawSource, DYN);
-        if (target.type.kind === "dyn" && source.type.kind === "dyn") {
-          return { kind: "libCall", fn: "dyn.assign", args: [target, source], type: DYN, loc };
+        const dynTarget =
+          target.type.kind === "dyn" ? target : lowerer.coerceToExpected(target, DYN);
+        if (dynTarget.type.kind === "dyn" && source.type.kind === "dyn") {
+          return { kind: "libCall", fn: "dyn.assign", args: [dynTarget, source], type: DYN, loc };
         }
       }
       // A CLASS-INSTANCE target and a plain record source whose fields are
