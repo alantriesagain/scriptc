@@ -141,6 +141,13 @@ function rootsAtError(lowerer: Lowerer, t: IrType | null): boolean {
   return false;
 }
 
+/** Whether the scan recorded a dyn-flavored 'newListener' or 'removeListener'
+ * listener. Then every listener registers through the adapter, typed meta
+ * listeners included, so each entry has a function value to pass. */
+function hasDynMetaListener(table: Map<string, EventSig>): boolean {
+  return [...META_EVENTS].some((meta) => table.get(meta)?.dynListener === true);
+}
+
 /** Whether a typed listener of `name` registers through the dyn adapter, so
  * its entry holds a checked-dynamic function value: a dyn-flavored
  * 'newListener' or 'removeListener' listener receives every added or
@@ -150,7 +157,7 @@ function rootsAtError(lowerer: Lowerer, t: IrType | null): boolean {
  * conversion admits it or throws a TypeError. */
 function registersAsDyn(lowerer: Lowerer, name: string, streamForced: boolean): boolean {
   const table = emitterEvents(lowerer);
-  if ([...META_EVENTS].some((meta) => table.get(meta)?.dynListener === true)) return true;
+  if (hasDynMetaListener(table)) return true;
   if ((name === "error" || name === ERROR_MONITOR_EVENT) && table.get("error")?.valueEmit === true)
     return true;
   const sig = streamForced ? undefined : table.get(name);
@@ -856,7 +863,9 @@ function boxedPayload(lowerer: Lowerer, value: IrExpr, node: ts.Expression): IrE
  * function that was registered. JavaScript sources read the untyped array,
  * whose functions take every argument a call passes. TypeScript sources
  * read the element type the typed path declares, the event's tuple: a
- * listener of exactly that signature unwraps to the original closure. */
+ * listener of exactly that signature unwraps to the original closure. An
+ * event no literal emit or listener gives a tuple (one registered only under
+ * computed names) reads the untyped array in both. */
 function dynListenerArray(
   lowerer: Lowerer,
   table: Map<string, EventSig>,
@@ -872,7 +881,7 @@ function dynListenerArray(
     type: DYN,
     loc,
   };
-  if (isJsSourceFile(ts.getSourceFileOfNode(call))) return array;
+  if (isJsSourceFile(ts.getSourceFileOfNode(call)) || !table.has(name)) return array;
   const tuple = tupleOf(lowerer, table, name, call);
   return {
     kind: "dynCheck",
@@ -1007,8 +1016,9 @@ function lowerDynListenerCall(
     // receives the event name and the added or removed listener's
     // checked-dynamic function value, as in Node. Every other listener
     // then registers through the adapter (registersAsDyn), which the event
-    // table's scan arranges.
-    if (registering && emitterEvents(lowerer).get(name)?.dynListener !== true) {
+    // table's scan arranges when it records a dyn-flavored listener of
+    // either meta event; a typed listener of the other one arrives here too.
+    if (registering && !hasDynMetaListener(emitterEvents(lowerer))) {
       lowerer.noLowering(
         `'${member}' of '${name}' with a checked-dynamic listener the event table did not record`,
         cbNode,
