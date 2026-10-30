@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import {
+  accessSync,
   closeSync,
   constants,
   existsSync,
@@ -111,6 +112,10 @@ export function tscTsExecutable(
   throw new Error("tsc-ts checker: the tsc-ts package is not installed");
 }
 
+/** The checker executables writeCheckerOnce looked at in this process: each is
+ * checked once, whatever the outcome. */
+const checkersSeen = new Set<string>();
+
 /**
  * Writes the tsc-ts executable again with one write, once per installed
  * copy. Its code maps with 2 MiB pages when the page cache holds the file in
@@ -120,9 +125,12 @@ export function tscTsExecutable(
  * The copy is renamed into place, and `.tsc-ts-written` beside it holds its
  * size, as tsc-ts's own launcher (bin/tsc-ts.js) writes it, so whichever runs
  * first makes the copy. When the directory is not writable, the executable
- * stays as installed. Linux only; the callers check the platform.
+ * stays as installed, and it is not read. Each executable is checked once per
+ * process. Linux only; the callers check the platform.
  */
 export function writeCheckerOnce(executable: string): void {
+  if (checkersSeen.has(executable)) return;
+  checkersSeen.add(executable);
   const marker = join(dirname(executable), ".tsc-ts-written");
   let size: number;
   try {
@@ -134,6 +142,13 @@ export function writeCheckerOnce(executable: string): void {
     if (readFileSync(marker, "utf8") === String(size)) return;
   } catch {
     // No copy has been written.
+  }
+  // The copy goes beside the executable: in a directory this process cannot
+  // write, the executable is not read at all.
+  try {
+    accessSync(dirname(executable), constants.W_OK);
+  } catch {
+    return;
   }
   try {
     const bytes = readFileSync(executable);

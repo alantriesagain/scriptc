@@ -17,8 +17,15 @@ import { afterEach, expect, test, vi } from "vitest";
 import { checkerBackend, tscTsExecutable, tscTsPlatformPackage } from "./checker-backend.js";
 
 // The copy's name comes from randomBytes; `fixedRandom` makes it known. `writes`
-// collects the mode of each file writeSync writes to.
-const state = vi.hoisted(() => ({ fixedRandom: false, writes: null as number[] | null }));
+// collects the mode of each file writeSync writes to. A directory in
+// `unwritable` fails accessSync's write check, and `reads` collects the paths
+// readFileSync reads.
+const state = vi.hoisted(() => ({
+  fixedRandom: false,
+  writes: null as number[] | null,
+  unwritable: new Set<string>(),
+  reads: [] as string[],
+}));
 vi.mock("node:crypto", async (importOriginal) => {
   const crypto = await importOriginal<typeof import("node:crypto")>();
   return {
@@ -31,6 +38,15 @@ vi.mock("node:fs", async (importOriginal) => {
   const fs = await importOriginal<typeof import("node:fs")>();
   return {
     ...fs,
+    accessSync: ((path: string, mode?: number) => {
+      if (mode !== undefined && (mode & fs.constants.W_OK) !== 0 && state.unwritable.has(path))
+        throw Object.assign(new Error(`EACCES: ${path}`), { code: "EACCES" });
+      return fs.accessSync(path, mode);
+    }) as typeof fs.accessSync,
+    readFileSync: ((path: string, ...rest: unknown[]) => {
+      state.reads.push(String(path));
+      return (fs.readFileSync as (path: string, ...rest: unknown[]) => unknown)(path, ...rest);
+    }) as typeof fs.readFileSync,
     writeSync: ((fd: number, ...rest: unknown[]) => {
       state.writes?.push(fs.fstatSync(fd).mode & 0o7777);
       return (fs.writeSync as (fd: number, ...rest: unknown[]) => number)(fd, ...rest);
@@ -42,6 +58,8 @@ const roots: string[] = [];
 
 afterEach(() => {
   state.fixedRandom = false;
+  state.unwritable.clear();
+  state.reads = [];
   state.writes = null;
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
@@ -167,4 +185,33 @@ test("a path already at the copy's name is not followed", () => {
   expect(lstatSync(temporary).isSymbolicLink()).toBe(true);
   expect(statSync(executable).ino).toBe(before.ino);
   expect(readdirSync(lib).sort()).toEqual(["tsc-ts", `tsc-ts.${"ab".repeat(8)}.tmp`]);
+});
+
+test("an executable in a directory this process cannot write is not read", () => {
+  const root = tempRoot();
+  writePackage(join(root, "node_modules/tsc-ts"), "tsc-ts");
+  writePackage(join(root, "node_modules/@tsc-ts/linux-x64-gnu"), "@tsc-ts/linux-x64-gnu", "tsc-ts");
+  const lib = join(root, "node_modules/@tsc-ts/linux-x64-gnu/lib");
+  const executable = join(lib, "tsc-ts");
+  const before = statSync(executable);
+  state.unwritable.add(lib);
+  expect(tscTsExecutable([root], "@tsc-ts/linux-x64-gnu", "linux")).toBe(executable);
+  expect(state.reads).not.toContain(executable);
+  expect(statSync(executable).ino).toBe(before.ino);
+  expect(readdirSync(lib)).toEqual(["tsc-ts"]);
+});
+
+test("each executable is checked once per process", () => {
+  const root = tempRoot();
+  writePackage(join(root, "node_modules/tsc-ts"), "tsc-ts");
+  writePackage(join(root, "node_modules/@tsc-ts/linux-x64-gnu"), "@tsc-ts/linux-x64-gnu", "tsc-ts");
+  const lib = join(root, "node_modules/@tsc-ts/linux-x64-gnu/lib");
+  state.unwritable.add(lib);
+  tscTsExecutable([root], "@tsc-ts/linux-x64-gnu", "linux");
+  const marker = join(lib, ".tsc-ts-written");
+  const firstReads = state.reads.filter((path) => path === marker).length;
+  expect(firstReads).toBe(1);
+  tscTsExecutable([root], "@tsc-ts/linux-x64-gnu", "linux");
+  tscTsExecutable([root], "@tsc-ts/linux-x64-gnu", "linux");
+  expect(state.reads.filter((path) => path === marker).length).toBe(1);
 });
