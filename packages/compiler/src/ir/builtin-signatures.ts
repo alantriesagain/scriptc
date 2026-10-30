@@ -459,6 +459,13 @@ function buildLibFnSignatures() {
     "module.cacheHas": { argTypes: [STRING], result: BOOL },
     "module.cacheKeys": { argTypes: [], result: arrayOf(STRING) },
     "timers.setTimeout": { argTypes: [{ kind: "func", params: [], ret: VOID }, F64], result: VOID },
+    /** A setTimeout/setInterval delay that is not a literal in [1, 2^31-1]:
+     * the delay unchanged, after the warning Node's Timeout constructor
+     * emits when it sets the delay to 1 (scr_timer_user_delay). The second
+     * argument is 0 for the global setTimeout, 1 for the global
+     * setInterval and 2 for a node:timers import, plus 4 for a delay read
+     * from an array element. */
+    "timers.userDelay": { argTypes: [F64, F64], result: F64 },
     /** The repeating timer pair. setInterval takes (callback, ms) like
      * setTimeout and RETURNS the f64 handle the fallback declarations
      * promise (ids start at 1, so truthiness narrowing works); the loop

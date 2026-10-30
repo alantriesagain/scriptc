@@ -395,6 +395,15 @@ function lowerTimerCall(
           );
     // An omitted delay is NaN, Node's undefined: the loop clamps it to
     // 1ms, and mock.timers queues it to run at the next tick.
+    let warned = false;
+    // An element read past the end is undefined in Node, which warns
+    // nothing; here it reads as NaN, so the runtime skips the NaN warning.
+    let delayNode = expr.arguments.nodes[1];
+    while (delayNode !== undefined && ts.isParenthesizedExpression(delayNode))
+      delayNode = delayNode.expression;
+    const delayKind =
+      (isRealTimerCallee(lowerer, expr.expression) ? 2 : member === "setInterval" ? 1 : 0) +
+      (delayNode !== undefined && ts.isElementAccessExpression(delayNode) ? 4 : 0);
     let ms: IrExpr =
       expr.arguments.nodes.length >= 2
         ? lowerer.lowerExpr(expr.arguments.nodes[1]!)
@@ -417,6 +426,45 @@ function lowerTimerCall(
       // (`after *= 1`), so undefined is NaN, the omitted delay. Other
       // unions stay as they are, and the lib boundary refuses them.
       ms = lowerOptionalNumber(lowerer, ms, loc, expr.arguments.nodes[1]);
+      warned = warnOnDefinedDelay(ms, delayKind, loc);
+    } else if (ms.type.kind === "dyn") {
+      // An untyped delay converts with ToNumber; undefined stays the
+      // omitted delay (Node's `after === undefined` branch).
+      const tmp = lowerer.declareHiddenLocal("%timerDelay", DYN);
+      const stable: IrExpr = { kind: "varRef", localId: tmp.id, type: DYN, loc };
+      const converted: IrExpr = {
+        kind: "libCall",
+        fn: "dyn.numberConstructor",
+        args: [stable],
+        type: F64,
+        loc,
+      };
+      ms = {
+        kind: "seqExpr",
+        stmts: [{ kind: "varDecl", localId: tmp.id, init: ms, loc }],
+        result: {
+          kind: "ternary",
+          cond: { kind: "dynTest", test: "undefined", value: stable, type: BOOL, loc },
+          then: { kind: "numLit", value: NaN, type: F64, loc },
+          else_: userDelay(converted, delayKind, loc),
+          type: F64,
+          loc,
+        },
+        type: F64,
+        loc,
+      };
+      warned = true;
+    }
+    // A delay Node sets to 1 emits its Timeout warning; a literal delay in
+    // range needs no check, and an omitted delay is undefined, which warns
+    // nothing.
+    if (
+      !warned &&
+      expr.arguments.nodes.length >= 2 &&
+      ms.type.kind === "f64" &&
+      !(ms.kind === "numLit" && ms.value >= 1 && ms.value <= 2147483647)
+    ) {
+      ms = userDelay(ms, delayKind, loc);
     }
     if (member === "setInterval") {
       return { kind: "libCall", fn: "timers.setInterval", args: [cb, ms], type: F64, loc };
@@ -530,6 +578,25 @@ function lowerTimerCall(
     return { kind: "libCall", fn: "timers.clearImmediate", args: [handle], type: VOID, loc };
   }
   return null;
+}
+
+/** `timers.userDelay(ms, kind)`: the delay, after the warning Node's
+ * Timeout constructor emits when it sets the delay to 1. `kind` is 0 for
+ * the global setTimeout, 1 for the global setInterval (mock.timers mocks
+ * both) and 2 for a node:timers import (which it leaves alone), plus 4 for
+ * a delay read from an array element. */
+function userDelay(ms: IrExpr, kind: number, loc: SrcLoc): IrExpr {
+  return { kind: "libCall", fn: "timers.userDelay", args: [ms, numLit(kind, loc)], type: F64, loc };
+}
+
+/** An optional delay (lowerOptionalNumber's undefined-or-number ternary):
+ * only the defined arm warns, since Node sets an undefined delay to 1
+ * without a warning. Answers whether the check was placed. */
+function warnOnDefinedDelay(ms: IrExpr, kind: number, loc: SrcLoc): boolean {
+  const choice = ms.kind === "seqExpr" ? ms.result : ms;
+  if (choice.kind !== "ternary") return false;
+  choice.else_ = userDelay(choice.else_, kind, loc);
+  return true;
 }
 
 function hasBoolArm(lowerer: Lowerer, type: IrType): boolean {

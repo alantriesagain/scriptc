@@ -1856,6 +1856,7 @@ export const LIB_FN_SYMS: Record<string, string> = {
   "timers.queueMicrotaskDyn": "scr_queue_microtask_dyn",
   "timers.setImmediateFnValue": "scr_set_immediate_dyn_value",
   "timers.immediatePromise": "scr_immediate_promise",
+  "timers.userDelay": "scr_timer_user_delay",
 };
 
 /** The mock-aware entry points (scr_test.c) that the timer calls of a
