@@ -3993,6 +3993,10 @@ export class Lowerer {
    * function called above the declaration statement reads that, never a
    * NULL slot. Filled by collectGlobals. */
   readonly varGlobalEntryInits = new Map<ts.SourceFile, IrGlobal[]>();
+  /** Initializer-less JavaScript lets holding a runtime handle or undefined
+   * that a closure captures (inferredEvolvingLetType). Reads inside a nested
+   * function lower as the checked-dynamic value. */
+  readonly closureDynLets = new Set<ts.Symbol>();
   /** Import-cycle bindings with an initialization flag, by global id, and
    * the top-level statements declaring them (cycle-initialization.ts). */
   readonly cycleInitFlags = new Map<string, CycleInitFlag>();

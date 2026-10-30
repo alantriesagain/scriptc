@@ -192,6 +192,11 @@ export function lowerIdentifierExpr(lowerer: Lowerer, expr: ts.Identifier, loc: 
   // when the checker types this USE as a single arm, maybeNarrow
   // bridges the tagged representation with a unionNarrow.
   const local = lowerer.resolveLocal(expr);
+  {
+    const slot = local ?? lowerer.globalOf(expr);
+    const closureRead = slot ? closureDynRead(lowerer, expr, slot.id, slot.type, loc) : null;
+    if (closureRead) return closureRead;
+  }
   // A Date local holding its time value reads as that Date: only uses
   // that read the time value reach here (date-values.ts).
   if (local && lowerer.timeValueDateLocals.has(local)) {
@@ -1217,4 +1222,54 @@ export function uriFunctionValue(lowerer: Lowerer, which: string, loc: SrcLoc): 
     });
   }
   return { kind: "closure", fnName: name, captures: [], type, loc };
+}
+
+/** A read of a captured handle `let` (Lowerer.closureDynLets) inside a
+ * function nested in the binding's scope. The checker types it as the
+ * handle, but the closure can run before the first write. As a member
+ * receiver (`c.address()`, `child.stdin`) it reads the handle and throws
+ * Node's TypeError when the binding is still undefined; elsewhere it reads
+ * the checked-dynamic value of the handle or undefined. Null for other
+ * reads. */
+function closureDynRead(
+  lowerer: Lowerer,
+  expr: ts.Identifier,
+  id: string,
+  type: IrType,
+  loc: SrcLoc,
+): IrExpr | null {
+  if (type.kind !== "union" || lowerer.closureDynLets.size === 0) return null;
+  const symbol = lowerer.resolveValueSymbol(expr);
+  if (!symbol || !lowerer.closureDynLets.has(symbol)) return null;
+  const decl = symbol.valueDeclaration;
+  if (!decl) return null;
+  const scopeOf = (node: ts.Node): ts.Node | undefined => {
+    let at = node.parent;
+    while (at !== undefined && !ts.isFunctionLike(at) && !ts.isSourceFile(at)) at = at.parent;
+    return at;
+  };
+  if (scopeOf(expr) === scopeOf(decl)) return null;
+  const parent = expr.parent;
+  const handle = lowerer.unions.get(type.unionId)?.arms.find((arm) => !isUnitType(arm));
+  if (handle && ts.isPropertyAccessExpression(parent) && parent.expression === expr) {
+    const helper = lowerer.narrowedArmHelper(
+      type.unionId,
+      handle,
+      loc,
+      `Cannot read properties of undefined (reading '${parent.name.text}')`,
+    );
+    if (helper)
+      return lowerer.checkedNarrowCall(
+        helper,
+        { kind: "varRef", localId: id, type, loc },
+        handle,
+        loc,
+      );
+  }
+  return {
+    kind: "dynFrom",
+    value: { kind: "varRef", localId: id, type, loc },
+    type: DYN,
+    loc,
+  };
 }
