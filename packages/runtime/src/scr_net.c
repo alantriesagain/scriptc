@@ -1562,6 +1562,19 @@ static void scr_net_sock_fire_data(ScrNetSocket *s, ScrBytes *chunk, ScrStr *tex
   scr_bytes_release(empty);
 }
 
+/* One decoded 'data' string after setEncoding: the pipe destination
+ * writes it, as Node's pipe writes the string chunk (UTF-8), and the
+ * 'data' listeners receive it. */
+static void scr_net_sock_emit_text(ScrNetSocket *s, ScrStr *text) {
+  if (s->pipe_dst) {
+    char *owned;
+    const char *bytes = scr_str_utf8(text, &owned);
+    scr_net_sock_write_raw(s->pipe_dst, bytes, text->len);
+    scr_str_utf8_end(owned);
+  }
+  if (s->data_ls.n > 0) scr_net_sock_fire_data(s, NULL, text);
+}
+
 /* EOF: 'end' fires now (directly — Node's poll-phase emit), then the
  * write half ends (allowHalfOpen false), and the fd closes once the FIN
  * is out. 'close' waits for the sweep. */
@@ -1573,6 +1586,15 @@ static void scr_net_sock_eof(ScrNetSocket *s) {
     s->native_eof(s->native_ctx);
     if (scr_exc_pending()) return;
   }
+  if (s->encoding != NULL && (s->data_ls.n > 0 || s->pipe_dst != NULL)) {
+    /* the decoder's end(): a held partial sequence is the last 'data',
+     * and the pipe destination receives it before its end() */
+    ScrStr *tail = scr_strdec_end(s->encoding, s->dec_pending);
+    s->dec_pending = 0;
+    if (tail->len > 0) scr_net_sock_emit_text(s, tail);
+    scr_str_release(tail);
+    if (scr_exc_pending()) return;
+  }
   if (s->pipe_dst) {
     /* pipe's end-the-destination default */
     ScrNetSocket *dst = s->pipe_dst;
@@ -1580,14 +1602,6 @@ static void scr_net_sock_eof(ScrNetSocket *s) {
       dst->wr_ending = true;
       scr_net_sock_maybe_finish_write(dst);
     }
-  }
-  if (s->encoding != NULL && s->data_ls.n > 0) {
-    /* the decoder's end(): a held partial sequence is the last 'data' */
-    ScrStr *tail = scr_strdec_end(s->encoding, s->dec_pending);
-    s->dec_pending = 0;
-    if (tail->len > 0) scr_net_sock_fire_data(s, NULL, tail);
-    scr_str_release(tail);
-    if (scr_exc_pending()) return;
   }
   scr_net_fire0_this(&s->end_ls, s, SCR_DYNH_NET_SOCKET);
   if (scr_exc_pending()) return;
@@ -1611,21 +1625,25 @@ static bool scr_net_sock_deliver(ScrNetSocket *s, const char *buf, size_t n) {
      * next chunk takes the listener path */
     return true;
   }
+  if (s->encoding != NULL && (s->pipe_dst != NULL || s->data_ls.n > 0)) {
+    /* the decoder answers the complete characters; a partial sequence
+     * waits for the next chunk, and an empty answer emits nothing */
+    ScrBytes *chunk = scr_bytes_new(SCR_BYTES_U8, (double)n);
+    chunk->is_buffer = true;
+    memcpy(chunk->data, buf, n);
+    ScrStr *text = scr_strdec_write(s->encoding, s->dec_pending, chunk);
+    s->dec_pending = scr_strdec_next(s->encoding, s->dec_pending, chunk);
+    scr_bytes_release(chunk);
+    if (text->len > 0) scr_net_sock_emit_text(s, text);
+    scr_str_release(text);
+    return !scr_exc_pending();
+  }
   if (s->pipe_dst) scr_net_sock_write_raw(s->pipe_dst, buf, n);
   if (s->data_ls.n > 0) {
     ScrBytes *chunk = scr_bytes_new(SCR_BYTES_U8, (double)n);
     chunk->is_buffer = true; /* Node delivers a Buffer */
     memcpy(chunk->data, buf, n);
-    if (s->encoding != NULL) {
-      /* the decoder answers the complete characters; a partial sequence
-       * waits for the next chunk, and an empty answer emits nothing */
-      ScrStr *text = scr_strdec_write(s->encoding, s->dec_pending, chunk);
-      s->dec_pending = scr_strdec_next(s->encoding, s->dec_pending, chunk);
-      if (text->len > 0) scr_net_sock_fire_data(s, NULL, text);
-      scr_str_release(text);
-    } else {
-      scr_net_sock_fire_data(s, chunk, NULL);
-    }
+    scr_net_sock_fire_data(s, chunk, NULL);
     scr_bytes_release(chunk);
     if (scr_exc_pending()) return false;
   }

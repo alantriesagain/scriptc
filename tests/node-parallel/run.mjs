@@ -89,11 +89,14 @@ const firstCause = (text) =>
     .trim()
     .slice(0, 300);
 
-async function one(file) {
+// Each job runs its files with its own TEST_THREAD_ID, as Node's test runner
+// does, so test/common/tmpdir gives concurrent files different directories.
+async function one(file, job) {
+  const env = { ...process.env, TEST_THREAD_ID: String(job) };
   const dir = join(testRoot, "parallel");
   const source = readFileSync(join(dir, file), "utf8");
   const flags = (/^\/\/ Flags: (.*)$/m.exec(source)?.[1] ?? "").split(/\s+/).filter(Boolean);
-  const node = await run(process.execPath, [...flags, file], { cwd: dir, timeout: 120_000 });
+  const node = await run(process.execPath, [...flags, file], { cwd: dir, env, timeout: 120_000 });
   const exe = join(out, "bin", `${file}.exe`);
   mkdirSync(join(out, "bin"), { recursive: true });
   const build = await run(process.execPath, [values.cli, "build", file, "-o", exe], {
@@ -106,7 +109,7 @@ async function one(file) {
     result.cause = firstCause(build.stdout + build.stderr);
     return result;
   }
-  const native = await run(exe, [], { cwd: dir, timeout: 120_000 });
+  const native = await run(exe, [], { cwd: dir, env, timeout: 120_000 });
   result.exit = termination(native);
   result.verdict = sameTermination(node, native) ? "pass" : "fail";
   if (result.verdict !== "pass") result.cause = firstCause(native.stderr + native.stdout);
@@ -116,9 +119,9 @@ async function one(file) {
 const results = [];
 const queue = [...files];
 await Promise.all(
-  Array.from({ length: Number(values.jobs) }, async () => {
+  Array.from({ length: Number(values.jobs) }, async (_, job) => {
     for (let file = queue.shift(); file !== undefined; file = queue.shift()) {
-      const result = await one(file);
+      const result = await one(file, job);
       results.push(result);
       console.log(`${result.verdict.padEnd(8)} ${file}${result.cause ? `  ${result.cause}` : ""}`);
     }

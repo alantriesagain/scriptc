@@ -18,6 +18,6 @@ Options:
 - `--cli`: the scriptc CLI entry (default `packages/cli/dist/main.js`).
 - `--jobs`: concurrent files (default 4).
 
-Node runs each file with its `// Flags:` line. Results are written to `<out>/results.json` and `<out>/results.md`.
+Node runs each file with its `// Flags:` line. Each job runs its files with its own `TEST_THREAD_ID`, as Node's test runner does, so `test/common/tmpdir` gives concurrent files different directories. Results are written to `<out>/results.json` and `<out>/results.md`.
 
 Before a lane relies on the minimal common, run its files under Node in `<out>/tree/test/parallel`: they should all pass there.
