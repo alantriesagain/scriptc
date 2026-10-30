@@ -48,3 +48,15 @@ function captured(): string {
   return `${show()} ${size()} ${spread()}`;
 }
 console.log(captured());
+
+// Closures declared before the island array they capture.
+function capturedEarly(): string {
+  const show = (): string => describe(early);
+  const spread = (): string => [...early].join(",");
+  function size(): number {
+    return early.length;
+  }
+  const early = list();
+  return `${show()} ${spread()} ${size()}`;
+}
+console.log(capturedEarly());
