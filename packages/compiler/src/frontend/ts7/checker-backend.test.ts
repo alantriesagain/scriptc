@@ -1,12 +1,48 @@
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, expect, test } from "vitest";
+import { afterEach, expect, test, vi } from "vitest";
 import { checkerBackend, tscTsExecutable, tscTsPlatformPackage } from "./checker-backend.js";
+
+// The copy's name comes from randomBytes; `fixedRandom` makes it known. `writes`
+// collects the mode of each file writeSync writes to.
+const state = vi.hoisted(() => ({ fixedRandom: false, writes: null as number[] | null }));
+vi.mock("node:crypto", async (importOriginal) => {
+  const crypto = await importOriginal<typeof import("node:crypto")>();
+  return {
+    ...crypto,
+    randomBytes: (size: number) =>
+      state.fixedRandom ? Buffer.alloc(size, 0xab) : crypto.randomBytes(size),
+  };
+});
+vi.mock("node:fs", async (importOriginal) => {
+  const fs = await importOriginal<typeof import("node:fs")>();
+  return {
+    ...fs,
+    writeSync: ((fd: number, ...rest: unknown[]) => {
+      state.writes?.push(fs.fstatSync(fd).mode & 0o7777);
+      return (fs.writeSync as (fd: number, ...rest: unknown[]) => number)(fd, ...rest);
+    }) as typeof fs.writeSync,
+  };
+});
 
 const roots: string[] = [];
 
 afterEach(() => {
+  state.fixedRandom = false;
+  state.writes = null;
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
@@ -72,4 +108,63 @@ test("a missing tsc-ts install or platform package is an error", () => {
   expect(() => tscTsExecutable([root], "@tsc-ts/linux-x64-gnu", "linux")).toThrow(
     "has no @tsc-ts/linux-x64-gnu executable",
   );
+});
+
+test("a Linux tsc-ts executable is written again once, with one write", () => {
+  const root = tempRoot();
+  writePackage(join(root, "node_modules/tsc-ts"), "tsc-ts");
+  const lib = join(root, "node_modules/@tsc-ts/linux-x64-gnu/lib");
+  writePackage(join(root, "node_modules/@tsc-ts/linux-x64-gnu"), "@tsc-ts/linux-x64-gnu", "tsc-ts");
+  const executable = join(lib, "tsc-ts");
+  writeFileSync(executable, "the checker's bytes");
+  chmodSync(executable, 0o755);
+  const before = statSync(executable);
+  expect(tscTsExecutable([root], "@tsc-ts/linux-x64-gnu", "linux")).toBe(executable);
+  const after = statSync(executable);
+  expect(after.ino).not.toBe(before.ino);
+  expect(after.mode & 0o777).toBe(0o755);
+  expect(readFileSync(executable, "utf8")).toBe("the checker's bytes");
+  expect(readFileSync(join(lib, ".tsc-ts-written"), "utf8")).toBe(String(after.size));
+  // A later build finds the marker and leaves the copy as it is.
+  tscTsExecutable([root], "@tsc-ts/linux-x64-gnu", "linux");
+  expect(statSync(executable).ino).toBe(after.ino);
+  expect(readdirSync(lib).sort()).toEqual([".tsc-ts-written", "tsc-ts"]);
+});
+
+test("the copy is created with mode 0600 and gets the executable's mode before the rename", () => {
+  const root = tempRoot();
+  writePackage(join(root, "node_modules/tsc-ts"), "tsc-ts");
+  writePackage(join(root, "node_modules/@tsc-ts/linux-x64-gnu"), "@tsc-ts/linux-x64-gnu", "tsc-ts");
+  const executable = join(root, "node_modules/@tsc-ts/linux-x64-gnu/lib/tsc-ts");
+  writeFileSync(executable, "the checker's bytes");
+  chmodSync(executable, 0o755);
+  state.writes = [];
+  const umask = process.umask(0o002);
+  try {
+    tscTsExecutable([root], "@tsc-ts/linux-x64-gnu", "linux");
+  } finally {
+    process.umask(umask);
+  }
+  // The executable and the marker, each written while its file is 0600.
+  expect(state.writes).toEqual([0o600, 0o600]);
+  expect(statSync(executable).mode & 0o7777).toBe(0o755);
+});
+
+test("a path already at the copy's name is not followed", () => {
+  const root = tempRoot();
+  writePackage(join(root, "node_modules/tsc-ts"), "tsc-ts");
+  writePackage(join(root, "node_modules/@tsc-ts/linux-x64-gnu"), "@tsc-ts/linux-x64-gnu", "tsc-ts");
+  const lib = join(root, "node_modules/@tsc-ts/linux-x64-gnu/lib");
+  const executable = join(lib, "tsc-ts");
+  const victim = join(root, "victim");
+  writeFileSync(victim, "not the checker");
+  const temporary = `${executable}.${"ab".repeat(8)}.tmp`;
+  symlinkSync(victim, temporary);
+  const before = statSync(executable);
+  state.fixedRandom = true;
+  expect(tscTsExecutable([root], "@tsc-ts/linux-x64-gnu", "linux")).toBe(executable);
+  expect(readFileSync(victim, "utf8")).toBe("not the checker");
+  expect(lstatSync(temporary).isSymbolicLink()).toBe(true);
+  expect(statSync(executable).ino).toBe(before.ino);
+  expect(readdirSync(lib).sort()).toEqual(["tsc-ts", `tsc-ts.${"ab".repeat(8)}.tmp`]);
 });
