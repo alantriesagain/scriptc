@@ -21,7 +21,7 @@ if [ -z "${REFORK_COPY:-}" ]; then
 fi
 cd "$(git rev-parse --show-toplevel)"
 
-PATCHES=(tsc-ts-0.1.0 census-report generic-record-return async-return-union generic-unknown-fields async-dynamic-return workspace-source-js abstract-method-lookups fork-docs)
+PATCHES=(tsc-ts-0.1.0 census-report async-return-union generic-unknown-fields async-dynamic-return workspace-source-js abstract-method-lookups fork-docs)
 declare -A DEP=()
 
 BASE=""
@@ -209,7 +209,7 @@ fi
 # ── optional gates ──────────────────────────────────────────────────────
 run_focused_tests() {
   echo "== focused patch tests"
-  SCRIPTC_TEST_WORKERS=2 $PNPM exec vitest run tests/harness/llvm-differential.test.ts -t '494[4-9]|4956|5791|5813|690[34]'
+  SCRIPTC_TEST_WORKERS=2 $PNPM exec vitest run tests/harness/llvm-differential.test.ts -t '494[4-9]|4956|5813|690[34]'
   $PNPM exec vitest run tests/harness/diagnostics.test.ts tests/harness/workspace-source-js.test.ts \
     packages/compiler/test/class-method-mutations.test.ts packages/compiler/src/diagnostics/envelope.test.ts \
     packages/compiler/test/runtime-optional-precision.test.ts
