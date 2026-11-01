@@ -21,7 +21,7 @@ if [ -z "${REFORK_COPY:-}" ]; then
 fi
 cd "$(git rev-parse --show-toplevel)"
 
-PATCHES=(tsc-ts-0.0.10 census-report generic-record-return async-return-union generic-unknown-fields async-dynamic-return workspace-source-js abstract-method-lookups fork-docs)
+PATCHES=(tsc-ts-0.1.0 census-report generic-record-return async-return-union generic-unknown-fields async-dynamic-return workspace-source-js abstract-method-lookups fork-docs)
 declare -A DEP=()
 
 BASE=""
@@ -71,10 +71,11 @@ echo "== node $(node --version) (tests want .node-version's 24.22.0)"
 TSC_TS_TAG=$(git show "$BASE_SHA:packages/compiler/package.json" | sed -n 's/.*"tsc-ts": "\([^"]*\)".*/\1/p')
 if [ -n "$TSC_TS_TAG" ]; then
   echo "== tsc-ts at base: $TSC_TS_TAG"
-  if git rev-parse --verify -q tsc-ts-0.0.10 >/dev/null; then
-    TSC_TS_PATCH=$(git show "tsc-ts-0.0.10:packages/compiler/package.json" | sed -n 's/.*"tsc-ts": "\([^"]*\)".*/\1/p')
+  TSC_TS_BRANCH=$(printf '%s\n' "${PATCHES[@]}" | grep '^tsc-ts-' | head -1 || true)
+  if [ -n "$TSC_TS_BRANCH" ] && git rev-parse --verify -q "$TSC_TS_BRANCH" >/dev/null; then
+    TSC_TS_PATCH=$(git show "$TSC_TS_BRANCH:packages/compiler/package.json" | sed -n 's/.*"tsc-ts": "\([^"]*\)".*/\1/p')
     if [ -n "$TSC_TS_PATCH" ] && [ "$(printf '%s\n%s\n' "$TSC_TS_TAG" "$TSC_TS_PATCH" | sort -V | tail -1)" = "$TSC_TS_TAG" ]; then
-      echo "refork: warn: the base already pins tsc-ts $TSC_TS_TAG; drop the tsc-ts-0.0.10 branch from PATCHES" >&2
+      echo "refork: warn: the base already pins tsc-ts $TSC_TS_TAG; drop the $TSC_TS_BRANCH branch from PATCHES" >&2
     fi
   fi
 fi
