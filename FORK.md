@@ -103,6 +103,16 @@ On the published 0.4.7, 5791 builds and matches node, so `generic-record-return`
 
 Rebased onto the tag, `census-report` conflicts in nine files with v0.4.6's `--fail-on=dynamic-slots` gate (SC6104) and v0.4.7's contract types, which took SC7001 to SC7009 in `codes.ts`. The slow-path note moves to SC6201, a SC62xx sub-band beside upstream's SC61xx performance notes, registered in `codes.ts`; the envelope's slow-path matcher is `^SC62\d{2}$`, and `--fail-on` takes all eight values with `slow-paths` after `dynamic-slots`. Light's coverage CLI and website still name SC7001 and need the same rename. The other patches rebase cleanly.
 
+### Checked 2026-11-08: v0.4.8 (2026-11-03), v0.4.9 (2026-11-06) and the fork's pull requests
+
+Four patches landed upstream as maintainer rewrites that name this fork's author as co-author, merged on 2026-11-07, the day after v0.4.9, so no tag has them yet: `async-dynamic-return` (#3083, landed as #3104, fixes #3078), `workspace-source-js` (#3084, as #3111, fixes #3079), `async-return-union` (#3085, as #3109, fixes #3080) and `generic-unknown-fields` (#3086, as #3107, fixes #3081). `abstract-method-lookups` is open as #3082. `census-report` (#1153) was closed on 2026-10-23 as outside upstream's focus ("a new coverage note band and `--fail-on` mode is outside that for now"); #1149 stays open, so the patch stays in the fork.
+
+v0.4.9 pins tsc-ts 0.0.10. tsc-ts 0.1.1 and 0.1.2 still follow TypeScript 7.1 while upstream main keeps the frontend's AST types on `typescript@7.0.2`, so the 0.1.0 blocker above still holds.
+
+Upstream main took SC6201 for "start-up failure that Node reports for the same program" (`9f03224b17`, 2026-11-06, an SC62xx band of failures the program has under Node too). v0.4.9 does not have it, so the first tag after it collides with `census-report`'s SC6201.
+
+The fork waits for v0.4.10 rather than porting to v0.4.9. At that port: drop the four landed patches after checking their programs (4946 to 4949, 4956, 5813 and the `workspace-source-js` test) against the published release, keep `abstract-method-lookups` unless #3082 has landed, and move `census-report`'s note to SC6901, at the far end of the SC6xxx family from the order upstream adds bands in, with light's references renamed to match.
+
 ## Problems light hit that no patch covers (found 2026-10-18 on the v0.3.6 fork, extended 2026-10-21 on v0.4.1)
 
 Found while typing light without `any` and measuring its core with paired probes (light's `native/probes/pairs/`). Light works around each one; none is offered upstream yet.
