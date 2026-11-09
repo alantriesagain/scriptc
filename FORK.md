@@ -35,8 +35,8 @@ methods join the method-write census). It slows light's benchmark about twofold,
 Upstream context: vercel-labs/scriptc#934 (JSDoc-typed JavaScript classes compile 70 to 160 times
 slower than the same TypeScript), which is why light moved to TypeScript and needed these patches.
 
-For pull requests, each patch branch is pushed to this fork (`origin`) as `pr/<branch>`, and
-`main` on the fork is the upstream release itself; the numbers above are vercel-labs/scriptc's.
+A patch offered upstream is a pull request from this fork's (`origin`) `pr/<branch>`, kept apart from
+the patch branch (see the push below), and `main` on the fork is the upstream release itself; the numbers above are vercel-labs/scriptc's.
 
 ## Upstream after v0.3.6 (checked 2026-10-18; v0.4.0 and v0.4.1 rechecked 2026-10-21; v0.4.2 rechecked 2026-10-23)
 
@@ -199,12 +199,13 @@ Before a run, `for b in <branches>; do git cherry <tag> $b; done` names the patc
 they are; step 5 of the verification below finds the ones it fixed another way. Drop such a branch
 from `PATCHES` in the script and from the table.
 
-After a run, push the same shape to this fork; every branch is rewritten, so the push is forced:
+After a run, push the fork's branches; every one is rewritten, so the push is forced:
 
 ```
-BRANCHES="ts-unknown-fields generic-method-slots census-typed-keys census-report async-return-union generic-unknown-fields async-dynamic-return workspace-source-js abstract-method-lookups"
-git push -f origin main light-integration fork-docs $(for b in $BRANCHES; do echo $b:pr/$b; done)
+git push -f origin main light-integration fork-docs
 ```
+
+Leave the `pr/<branch>` branches out of it. They are the heads of pull requests on vercel-labs/scriptc, often reworked on upstream main for review (#3082's head is not the patch branch), and a forced push of a patch branch there replaces an open pull request's commits. Update a `pr/<branch>` only for its pull request, on purpose.
 
 Then verify, in this order:
 
