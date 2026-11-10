@@ -21,7 +21,7 @@ if [ -z "${REFORK_COPY:-}" ]; then
 fi
 cd "$(git rev-parse --show-toplevel)"
 
-PATCHES=(census-report async-return-union generic-unknown-fields async-dynamic-return workspace-source-js abstract-method-lookups fork-docs)
+PATCHES=(census-report abstract-method-lookups fork-docs)
 declare -A DEP=()
 
 BASE=""
@@ -209,10 +209,9 @@ fi
 # ── optional gates ──────────────────────────────────────────────────────
 run_focused_tests() {
   echo "== focused patch tests"
-  SCRIPTC_TEST_WORKERS=2 $PNPM exec vitest run tests/harness/llvm-differential.test.ts -t '494[4-9]|4956|5813|690[34]'
-  $PNPM exec vitest run tests/harness/diagnostics.test.ts tests/harness/workspace-source-js.test.ts \
-    packages/compiler/test/class-method-mutations.test.ts packages/compiler/src/diagnostics/envelope.test.ts \
-    packages/compiler/test/runtime-optional-precision.test.ts
+  SCRIPTC_TEST_WORKERS=2 $PNPM exec vitest run tests/harness/llvm-differential.test.ts -t '690[34]'
+  $PNPM exec vitest run tests/harness/diagnostics.test.ts \
+    packages/compiler/test/class-method-mutations.test.ts packages/compiler/src/diagnostics/envelope.test.ts
   $PNPM exec vitest run tests/harness/coverage.test.ts -t 'slow path'
   $PNPM test:ts7 --baselines-only
 }
