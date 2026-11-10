@@ -190,11 +190,12 @@ if [ "$BUILD" = 1 ]; then
   $PNPM --filter @scriptc/runtime-linux-x64-gnu run build:native
   HELPER=packages/llvm-linux-x64-gnu/bin/scriptc-llvm-codegen
   helper_version() { "$HELPER" version --format=json 2>/dev/null | grep -o '"scriptc_package_version":"[^"]*"' | cut -d'"' -f4; }
-  if [ "$(helper_version)" != "$VERSION" ]; then
+  # Since v0.4.11 the package also ships the compile-time evaluator, bin/scriptc-comptime.
+  if [ "$(helper_version)" != "$VERSION" ] || [ ! -x "$(dirname "$HELPER")/scriptc-comptime" ]; then
     echo "== LLVM helper $VERSION"
     tmp=$(mktemp -d)
     (cd "$tmp" && npm pack -q "@scriptc/llvm-linux-x64-gnu@$VERSION" >/dev/null && tar xzf "scriptc-llvm-linux-x64-gnu-$VERSION.tgz")
-    install -m 755 "$tmp/package/bin/scriptc-llvm-codegen" "$HELPER"
+    install -m 755 "$tmp"/package/bin/* "$(dirname "$HELPER")/"
     rm -rf "$tmp"
     [ "$(helper_version)" = "$VERSION" ] || { echo "refork: the LLVM helper does not report $VERSION" >&2; exit 1; }
   fi
