@@ -171,10 +171,12 @@ Three pieces must match the compiler's version (`packages/cli/package.json`):
    ```
 3. **The LLVM helper** (`packages/llvm-linux-x64-gnu/bin/scriptc-llvm-codegen`, gitignored): the
    published binary for the same version, since its source (`native/`) rarely changes. It embeds
-   its version; a mismatch fails every build with SC3003.
+   its version; a mismatch fails every build with SC3003. Since v0.4.11 the package also ships
+   the compile-time evaluator, `bin/scriptc-comptime`; without it every `comptime(...)` fails with
+   SC1110 "the compile-time evaluator ... is missing".
    ```
    cd "$(mktemp -d)" && npm pack @scriptc/llvm-linux-x64-gnu@<version> && tar xzf scriptc-llvm-linux-x64-gnu-<version>.tgz
-   cp package/bin/scriptc-llvm-codegen ~/Projects/scriptc/packages/llvm-linux-x64-gnu/bin/
+   cp package/bin/* ~/Projects/scriptc/packages/llvm-linux-x64-gnu/bin/
    ```
    Check first that `git diff --stat v<old> v<new> -- native/` is empty; if the helper's source
    changed, the published binary is still right for an unpatched helper.
@@ -196,7 +198,8 @@ Three pieces must match the compiler's version (`packages/cli/package.json`):
    `PATCHES` in the script (the table's order, `fork-docs` last) and leaves the checkout on it.
 5. Unless `--no-build`: `pnpm install` when the lockfile changed, `pnpm build`, the runtime pack
    with zig (`$ZIG` names the zig directory; the default is the path above), and the published LLVM
-   helper for the new version when the one on disk reports another.
+   helper and compile-time evaluator for the new version when the helper on disk reports another
+   or the evaluator is missing.
 
 Before a run, `for b in <branches>; do git cherry <tag> $b; done` names the patches upstream took as
 they are; step 5 of the verification below finds the ones it fixed another way. Drop such a branch
